@@ -66,6 +66,7 @@ const INDEX_HTML = String.raw`<!doctype html>
 <meta charset="utf-8">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
+<script>
 /* ===== s15 PLAYABLE GAME LOOP ===== */
 (function(){
   const Z=window.ZONES||['Голова','Грудь','Живот','Пояс','Ноги'];
