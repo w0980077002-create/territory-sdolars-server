@@ -66,74 +66,7 @@ const INDEX_HTML = String.raw`<!doctype html>
 <meta charset="utf-8">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-<script>
-/* ===== s15 PLAYABLE GAME LOOP ===== */
-(function(){
-  const Z=window.ZONES||['Голова','Грудь','Живот','Пояс','Ноги'];
-  const ENEMY_FALLBACK='data:image/svg+xml;charset=UTF-8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 260"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#263f4b"/><stop offset="1" stop-color="#07131e"/></linearGradient></defs><rect width="320" height="260" rx="22" fill="#071522"/><path d="M55 250Q60 145 160 135Q260 145 265 250Z" fill="url(#g)" stroke="#6d858d" stroke-width="7"/><path d="M72 95Q75 30 125 28Q160 8 195 28Q245 30 248 95L230 155Q205 190 160 195Q115 190 90 155Z" fill="#82998f" stroke="#304a43" stroke-width="7"/><path d="M75 65Q45 42 57 7Q70 39 103 38M245 65Q275 42 263 7Q250 39 217 38" fill="#d7ceb1" stroke="#68614e" stroke-width="6"/><path d="M95 94Q116 76 137 94M183 94Q204 76 225 94" stroke="#263832" stroke-width="13" fill="none" stroke-linecap="round"/><circle cx="120" cy="102" r="8" fill="#ffd84d"/><circle cx="200" cy="102" r="8" fill="#ffd84d"/><path d="M125 140Q160 160 195 140Q187 180 160 181Q133 180 125 140Z" fill="#243934"/><path d="M145 157L153 174M175 157L167 174" stroke="#efe6ca" stroke-width="8" stroke-linecap="round"/><path d="M82 54Q160 15 238 54L230 75Q160 45 90 75Z" fill="#253d4b" stroke="#6b8792" stroke-width="6"/></svg>');
-const ENEMIES=[
-    {name:'Уличный боец',role:'Разбойник',hp:90,damage:8,def:3,reward:90,xp:25},
-    {name:'Наёмник',role:'Воин Sdolars',hp:125,damage:11,def:6,reward:130,xp:35},
-    {name:'Ледяной тролль',role:'Монстр',hp:170,damage:14,def:9,reward:200,xp:50},
-    {name:'Арена чемпион',role:'Элитный боец',hp:230,damage:18,def:12,reward:320,xp:80}
-  ];
-  state.maxExp=state.maxExp||150; state.level=state.level||1; state.hp=state.hp??state.maxHp; state.freePoints=state.freePoints||0; state.battles=state.battles||0; state.losses=state.losses||0;
-  function levelUp(){ while(state.exp>=state.maxExp){state.exp-=state.maxExp;state.level++;state.maxExp=Math.round(state.maxExp*1.25);state.maxHp+=8;state.freePoints+=2;state.hp=state.maxHp;toast('⬆️ Уровень повышен! +2 очка');} }
-  const oldSave=window.save; window.save=function(){levelUp(); oldSave();};
-  function totalD(){return 15+(state.items.find(x=>x.equipped&&x.type==='Оружие')?.damage||0)+Math.floor((state.strength||0)*.7)}
-  function totalA(){return state.agility||0}
-  window.totalDamage=totalD;
-  window.battle=function(){
-    if(window.stopAutoBattle)try{stopAutoBattle()}catch(e){}
-    const idx=Math.min(ENEMIES.length-1,Math.floor((state.wins||0)/3)); const e=ENEMIES[idx];
-    const tg=window.Telegram?.WebApp?.initDataUnsafe?.user; const pname=((tg?.first_name||'')+' '+(tg?.last_name||'')).trim()||state.playerName||'Игрок';
-    const pimg=document.querySelector('.avatar img')?.src||'';
-    const b={hp:e.hp,maxHp:e.hp,playerHp:Math.min(state.hp??state.maxHp,state.maxHp),maxPlayerHp:state.maxHp,turn:1,attack:null,defs:[],locked:false,auto:false,autoTimer:null,enemy:e};
-    pt.textContent='⚔️ Бой — арена Sdolars';
-    pb.innerHTML=\`<div class="vikingBattle">
-      <div class="fighters">
-       <div class="fighter"><img id="battlePlayerImg" src="\${pimg}"><div class="fighterName">\${chatEsc(pname)}</div><div class="fighterRole">⚔️ Уровень \${state.level}</div><div class="fhp"><i id="playerBar" style="width:\${b.playerHp/state.maxHp*100}%"></i></div><div class="fhpText" id="playerHp">\${b.playerHp}/\${state.maxHp} HP</div></div>
-       <div class="fighter enemy"><img id="battleEnemyImg" src="\${e.image||ENEMY_FALLBACK}" onerror="this.onerror=null;this.src=ENEMY_FALLBACK"><div class="fighterName">\${e.name}</div><div class="fighterRole">👹 \${e.role}</div><div class="fhp"><i id="enemyBar" style="width:100%"></i></div><div class="fhpText" id="enemyHp">\${e.hp}/\${e.hp} HP</div></div>
-      </div>
-      <div class="card"><b>Противник: \${e.name}</b><p>❤️ \${e.hp} HP · ⚔️ \${e.damage} · 🛡️ \${e.def}</p></div>
-      <div class="autoRow"><button class="autoBtn" id="autoBtn" onclick="toggleAutoBattle()">▶ АВТОБОЙ</button></div>
-      <div class="autoHint" id="autoHint">Автобой сам выбирает атаку и 2 зоны защиты.</div>
-      <div class="card"><b>Ход: <span id="turnNo">1</span></b></div>
-      <div class="card"><b>Атака — выбери 1 зону</b><div class="zones" id="attacks">\${Z.map((x,i)=>\`<button onclick="pickAttack(\${i},this)">\${x}</button>\`).join('')}</div></div>
-      <div class="card"><b>Защита — выбери 2 зоны</b><div class="zones" id="defs">\${Z.map((x,i)=>\`<button onclick="pickDef(\${i},this)">\${x}</button>\`).join('')}</div><p>Выбрано: <b id="dc">0/2</b></p></div>
-      <button class="goldBtn" onclick="strikeTurn()">⚔️ Сделать ход</button>
-      <div class="card"><b>История боя</b><div id="battleLog">Выбери атаку и две зоны защиты.</div></div>
-    </div>\`;
-    modal.classList.add('open'); window._battle=b;
-  };
-  window.strikeTurn=function(){
-    const b=window._battle;if(!b||b.locked||b.hp<=0||b.playerHp<=0)return;
-    if(b.attack===null||b.defs.length!==2){toast('Выбери атаку и 2 зоны защиты');return;}
-    b.locked=true;
-    const enemyAttack=Math.floor(Math.random()*5), enemyDef=[]; while(enemyDef.length<2){let x=Math.floor(Math.random()*5);if(!enemyDef.includes(x))enemyDef.push(x)}
-    const hit=b.attack!==enemyDef[0]&&b.attack!==enemyDef[1];
-    const crit=hit&&Math.random()<Math.min(.4,.08+(state.strength||0)*.012);
-    const dodge=Math.random()<Math.min(.3,.03+(state.agility||0)*.012);
-    const raw=Math.max(1,totalD()-Math.floor(b.enemy.def*.35)); const pd=hit?(crit?Math.round(raw*1.5):raw):0;
-    const blocked=b.defs.includes(enemyAttack); const ed=blocked||dodge?0:Math.max(1,b.enemy.damage+Math.floor(Math.random()*5)-Math.floor(totalDef()*.35));
-    b.hp=Math.max(0,b.hp-pd); b.playerHp=Math.max(0,b.playerHp-ed); state.hp=b.playerHp;
-    document.getElementById('enemyBar').style.width=(b.hp/b.maxHp*100)+'%'; document.getElementById('playerBar').style.width=(b.playerHp/b.maxPlayerHp*100)+'%';
-    document.getElementById('enemyHp').textContent=b.hp+'/'+b.maxHp+' HP'; document.getElementById('playerHp').textContent=b.playerHp+'/'+b.maxPlayerHp+' HP'; document.getElementById('turnNo').textContent=++b.turn;
-    const log=document.getElementById('battleLog'); log.innerHTML=\`<div>⚔️ Ты: <b>\${Z[b.attack]}</b> — \${hit?'попадание':'промах'}\${crit?' · <b>КРИТ!</b>':''} · \${pd} урона</div><div>🛡️ Твоя защита: \${Z[b.defs[0]]}, \${Z[b.defs[1]]} — \${blocked?'блок':'не блок'}</div><div>👹 \${b.enemy.name}: \${Z[enemyAttack]} — \${dodge?'уклонение':blocked?'заблокировано':'нанесено '+ed}</div>\`;
-    if(pd){document.querySelector('.enemy')?.classList.add('vikingHit');setTimeout(()=>document.querySelector('.enemy')?.classList.remove('vikingHit'),260)}
-    if(b.hp<=0){b.locked=true;state.eventProgress=Math.min(10,(state.eventProgress||0)+1);const finish=window.territoryServerAction?window.territoryServerAction('battle.reward'):Promise.resolve(false);finish.then(ok=>{if(ok){log.innerHTML='<b>🏆 ПОБЕДА!</b> +'+b.enemy.reward+' 🪙 +'+b.enemy.xp+' XP<br>'+log.innerHTML;setTimeout(()=>{closeP();toast('🏆 Победа! Следующий противник сильнее.');},900)}else{b.locked=false;toast('Сервер не подтвердил награду')}});return}
-    if(b.playerHp<=0){b.locked=true;const finish=window.territoryServerAction?window.territoryServerAction('battle.loss'):Promise.resolve(false);finish.then(ok=>{if(ok){log.innerHTML='<b>💀 ПОРАЖЕНИЕ</b><br>❤️ Восстановление рассчитано сервером.<br>'+log.innerHTML;setTimeout(()=>{closeP();toast('💀 Поражение. HP восстановлено сервером');},1100)}else{b.locked=false;toast('Сервер не подтвердил результат')}});return}
-    b.attack=null;b.defs=[];document.querySelectorAll('#attacks button,#defs button').forEach(x=>x.classList.remove('sel'));document.getElementById('dc').textContent='0/2';setTimeout(()=>{b.locked=false;if(b.auto)autoBattleStep()},280);
-  };
-  window.autoBattleStep=function(){const b=window._battle;if(!b||!b.auto||b.locked)return;b.attack=Math.floor(Math.random()*5);b.defs=[];while(b.defs.length<2){let x=Math.floor(Math.random()*5);if(!b.defs.includes(x))b.defs.push(x)}document.querySelectorAll('#attacks button').forEach((x,i)=>x.classList.toggle('sel',i===b.attack));document.querySelectorAll('#defs button').forEach((x,i)=>x.classList.toggle('sel',b.defs.includes(i)));document.getElementById('dc').textContent='2/2';b.autoTimer=setTimeout(()=>strikeTurn(),500)};
-  window.toggleAutoBattle=function(){const b=window._battle;if(!b)return;if(b.auto){b.auto=false;if(b.autoTimer)clearTimeout(b.autoTimer);document.getElementById('autoBtn').textContent='▶ АВТОБОЙ';document.getElementById('autoHint').textContent='Автобой сам выбирает атаку и 2 зоны защиты.';return}b.auto=true;document.getElementById('autoBtn').textContent='■ ОСТАНОВИТЬ АВТОБОЙ';document.getElementById('autoHint').textContent='Автобой включён.';autoBattleStep()};
-  window.stopAutoBattle=function(){const b=window._battle;if(b){b.auto=false;if(b.autoTimer)clearTimeout(b.autoTimer);b.autoTimer=null}};
-  const oldUse=window.useItem; window.useItem=function(i){const it=state.items[i];if(it?.name==='Аптечка'){state.hp=Math.min(state.maxHp,(state.hp??state.maxHp)+30);it.qty--;if(it.qty<=0)state.items.splice(i,1);save();toast('❤️ +30 HP');openP('inventory');return} oldUse(i)};
-  const oldComplete=window.completeQuest; window.completeQuest=function(){oldComplete();state.questDone=true;save()};
-  save();
-})();
 
-</script>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>Territory — Sdolars</title>
 <style>
@@ -930,6 +863,74 @@ const ENEMIES=[
   };
 })();
 <script>
+/* ===== s15 PLAYABLE GAME LOOP ===== */
+(function(){
+  const Z=window.ZONES||['Голова','Грудь','Живот','Пояс','Ноги'];
+  const ENEMY_FALLBACK='data:image/svg+xml;charset=UTF-8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 260"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#263f4b"/><stop offset="1" stop-color="#07131e"/></linearGradient></defs><rect width="320" height="260" rx="22" fill="#071522"/><path d="M55 250Q60 145 160 135Q260 145 265 250Z" fill="url(#g)" stroke="#6d858d" stroke-width="7"/><path d="M72 95Q75 30 125 28Q160 8 195 28Q245 30 248 95L230 155Q205 190 160 195Q115 190 90 155Z" fill="#82998f" stroke="#304a43" stroke-width="7"/><path d="M75 65Q45 42 57 7Q70 39 103 38M245 65Q275 42 263 7Q250 39 217 38" fill="#d7ceb1" stroke="#68614e" stroke-width="6"/><path d="M95 94Q116 76 137 94M183 94Q204 76 225 94" stroke="#263832" stroke-width="13" fill="none" stroke-linecap="round"/><circle cx="120" cy="102" r="8" fill="#ffd84d"/><circle cx="200" cy="102" r="8" fill="#ffd84d"/><path d="M125 140Q160 160 195 140Q187 180 160 181Q133 180 125 140Z" fill="#243934"/><path d="M145 157L153 174M175 157L167 174" stroke="#efe6ca" stroke-width="8" stroke-linecap="round"/><path d="M82 54Q160 15 238 54L230 75Q160 45 90 75Z" fill="#253d4b" stroke="#6b8792" stroke-width="6"/></svg>');
+const ENEMIES=[
+    {name:'Уличный боец',role:'Разбойник',hp:90,damage:8,def:3,reward:90,xp:25},
+    {name:'Наёмник',role:'Воин Sdolars',hp:125,damage:11,def:6,reward:130,xp:35},
+    {name:'Ледяной тролль',role:'Монстр',hp:170,damage:14,def:9,reward:200,xp:50},
+    {name:'Арена чемпион',role:'Элитный боец',hp:230,damage:18,def:12,reward:320,xp:80}
+  ];
+  state.maxExp=state.maxExp||150; state.level=state.level||1; state.hp=state.hp??state.maxHp; state.freePoints=state.freePoints||0; state.battles=state.battles||0; state.losses=state.losses||0;
+  function levelUp(){ while(state.exp>=state.maxExp){state.exp-=state.maxExp;state.level++;state.maxExp=Math.round(state.maxExp*1.25);state.maxHp+=8;state.freePoints+=2;state.hp=state.maxHp;toast('⬆️ Уровень повышен! +2 очка');} }
+  const oldSave=window.save; window.save=function(){levelUp(); oldSave();};
+  function totalD(){return 15+(state.items.find(x=>x.equipped&&x.type==='Оружие')?.damage||0)+Math.floor((state.strength||0)*.7)}
+  function totalA(){return state.agility||0}
+  window.totalDamage=totalD;
+  window.battle=function(){
+    if(window.stopAutoBattle)try{stopAutoBattle()}catch(e){}
+    const idx=Math.min(ENEMIES.length-1,Math.floor((state.wins||0)/3)); const e=ENEMIES[idx];
+    const tg=window.Telegram?.WebApp?.initDataUnsafe?.user; const pname=((tg?.first_name||'')+' '+(tg?.last_name||'')).trim()||state.playerName||'Игрок';
+    const pimg=document.querySelector('.avatar img')?.src||'';
+    const b={hp:e.hp,maxHp:e.hp,playerHp:Math.min(state.hp??state.maxHp,state.maxHp),maxPlayerHp:state.maxHp,turn:1,attack:null,defs:[],locked:false,auto:false,autoTimer:null,enemy:e};
+    pt.textContent='⚔️ Бой — арена Sdolars';
+    pb.innerHTML=\`<div class="vikingBattle">
+      <div class="fighters">
+       <div class="fighter"><img id="battlePlayerImg" src="\${pimg}"><div class="fighterName">\${chatEsc(pname)}</div><div class="fighterRole">⚔️ Уровень \${state.level}</div><div class="fhp"><i id="playerBar" style="width:\${b.playerHp/state.maxHp*100}%"></i></div><div class="fhpText" id="playerHp">\${b.playerHp}/\${state.maxHp} HP</div></div>
+       <div class="fighter enemy"><img id="battleEnemyImg" src="\${e.image||ENEMY_FALLBACK}" onerror="this.onerror=null;this.src=ENEMY_FALLBACK"><div class="fighterName">\${e.name}</div><div class="fighterRole">👹 \${e.role}</div><div class="fhp"><i id="enemyBar" style="width:100%"></i></div><div class="fhpText" id="enemyHp">\${e.hp}/\${e.hp} HP</div></div>
+      </div>
+      <div class="card"><b>Противник: \${e.name}</b><p>❤️ \${e.hp} HP · ⚔️ \${e.damage} · 🛡️ \${e.def}</p></div>
+      <div class="autoRow"><button class="autoBtn" id="autoBtn" onclick="toggleAutoBattle()">▶ АВТОБОЙ</button></div>
+      <div class="autoHint" id="autoHint">Автобой сам выбирает атаку и 2 зоны защиты.</div>
+      <div class="card"><b>Ход: <span id="turnNo">1</span></b></div>
+      <div class="card"><b>Атака — выбери 1 зону</b><div class="zones" id="attacks">\${Z.map((x,i)=>\`<button onclick="pickAttack(\${i},this)">\${x}</button>\`).join('')}</div></div>
+      <div class="card"><b>Защита — выбери 2 зоны</b><div class="zones" id="defs">\${Z.map((x,i)=>\`<button onclick="pickDef(\${i},this)">\${x}</button>\`).join('')}</div><p>Выбрано: <b id="dc">0/2</b></p></div>
+      <button class="goldBtn" onclick="strikeTurn()">⚔️ Сделать ход</button>
+      <div class="card"><b>История боя</b><div id="battleLog">Выбери атаку и две зоны защиты.</div></div>
+    </div>\`;
+    modal.classList.add('open'); window._battle=b;
+  };
+  window.strikeTurn=function(){
+    const b=window._battle;if(!b||b.locked||b.hp<=0||b.playerHp<=0)return;
+    if(b.attack===null||b.defs.length!==2){toast('Выбери атаку и 2 зоны защиты');return;}
+    b.locked=true;
+    const enemyAttack=Math.floor(Math.random()*5), enemyDef=[]; while(enemyDef.length<2){let x=Math.floor(Math.random()*5);if(!enemyDef.includes(x))enemyDef.push(x)}
+    const hit=b.attack!==enemyDef[0]&&b.attack!==enemyDef[1];
+    const crit=hit&&Math.random()<Math.min(.4,.08+(state.strength||0)*.012);
+    const dodge=Math.random()<Math.min(.3,.03+(state.agility||0)*.012);
+    const raw=Math.max(1,totalD()-Math.floor(b.enemy.def*.35)); const pd=hit?(crit?Math.round(raw*1.5):raw):0;
+    const blocked=b.defs.includes(enemyAttack); const ed=blocked||dodge?0:Math.max(1,b.enemy.damage+Math.floor(Math.random()*5)-Math.floor(totalDef()*.35));
+    b.hp=Math.max(0,b.hp-pd); b.playerHp=Math.max(0,b.playerHp-ed); state.hp=b.playerHp;
+    document.getElementById('enemyBar').style.width=(b.hp/b.maxHp*100)+'%'; document.getElementById('playerBar').style.width=(b.playerHp/b.maxPlayerHp*100)+'%';
+    document.getElementById('enemyHp').textContent=b.hp+'/'+b.maxHp+' HP'; document.getElementById('playerHp').textContent=b.playerHp+'/'+b.maxPlayerHp+' HP'; document.getElementById('turnNo').textContent=++b.turn;
+    const log=document.getElementById('battleLog'); log.innerHTML=\`<div>⚔️ Ты: <b>\${Z[b.attack]}</b> — \${hit?'попадание':'промах'}\${crit?' · <b>КРИТ!</b>':''} · \${pd} урона</div><div>🛡️ Твоя защита: \${Z[b.defs[0]]}, \${Z[b.defs[1]]} — \${blocked?'блок':'не блок'}</div><div>👹 \${b.enemy.name}: \${Z[enemyAttack]} — \${dodge?'уклонение':blocked?'заблокировано':'нанесено '+ed}</div>\`;
+    if(pd){document.querySelector('.enemy')?.classList.add('vikingHit');setTimeout(()=>document.querySelector('.enemy')?.classList.remove('vikingHit'),260)}
+    if(b.hp<=0){b.locked=true;state.eventProgress=Math.min(10,(state.eventProgress||0)+1);const finish=window.territoryServerAction?window.territoryServerAction('battle.reward'):Promise.resolve(false);finish.then(ok=>{if(ok){log.innerHTML='<b>🏆 ПОБЕДА!</b> +'+b.enemy.reward+' 🪙 +'+b.enemy.xp+' XP<br>'+log.innerHTML;setTimeout(()=>{closeP();toast('🏆 Победа! Следующий противник сильнее.');},900)}else{b.locked=false;toast('Сервер не подтвердил награду')}});return}
+    if(b.playerHp<=0){b.locked=true;const finish=window.territoryServerAction?window.territoryServerAction('battle.loss'):Promise.resolve(false);finish.then(ok=>{if(ok){log.innerHTML='<b>💀 ПОРАЖЕНИЕ</b><br>❤️ Восстановление рассчитано сервером.<br>'+log.innerHTML;setTimeout(()=>{closeP();toast('💀 Поражение. HP восстановлено сервером');},1100)}else{b.locked=false;toast('Сервер не подтвердил результат')}});return}
+    b.attack=null;b.defs=[];document.querySelectorAll('#attacks button,#defs button').forEach(x=>x.classList.remove('sel'));document.getElementById('dc').textContent='0/2';setTimeout(()=>{b.locked=false;if(b.auto)autoBattleStep()},280);
+  };
+  window.autoBattleStep=function(){const b=window._battle;if(!b||!b.auto||b.locked)return;b.attack=Math.floor(Math.random()*5);b.defs=[];while(b.defs.length<2){let x=Math.floor(Math.random()*5);if(!b.defs.includes(x))b.defs.push(x)}document.querySelectorAll('#attacks button').forEach((x,i)=>x.classList.toggle('sel',i===b.attack));document.querySelectorAll('#defs button').forEach((x,i)=>x.classList.toggle('sel',b.defs.includes(i)));document.getElementById('dc').textContent='2/2';b.autoTimer=setTimeout(()=>strikeTurn(),500)};
+  window.toggleAutoBattle=function(){const b=window._battle;if(!b)return;if(b.auto){b.auto=false;if(b.autoTimer)clearTimeout(b.autoTimer);document.getElementById('autoBtn').textContent='▶ АВТОБОЙ';document.getElementById('autoHint').textContent='Автобой сам выбирает атаку и 2 зоны защиты.';return}b.auto=true;document.getElementById('autoBtn').textContent='■ ОСТАНОВИТЬ АВТОБОЙ';document.getElementById('autoHint').textContent='Автобой включён.';autoBattleStep()};
+  window.stopAutoBattle=function(){const b=window._battle;if(b){b.auto=false;if(b.autoTimer)clearTimeout(b.autoTimer);b.autoTimer=null}};
+  const oldUse=window.useItem; window.useItem=function(i){const it=state.items[i];if(it?.name==='Аптечка'){state.hp=Math.min(state.maxHp,(state.hp??state.maxHp)+30);it.qty--;if(it.qty<=0)state.items.splice(i,1);save();toast('❤️ +30 HP');openP('inventory');return} oldUse(i)};
+  const oldComplete=window.completeQuest; window.completeQuest=function(){oldComplete();state.questDone=true;save()};
+  save();
+})();
+
+</script>
+<script>
 /* ===== s39 SERVER AUTHORITATIVE PVE ===== */
 (function(){
   const oldBattle=window.battle, oldStrike=window.strikeTurn;
@@ -940,7 +941,6 @@ const ENEMIES=[
 })();
 </script></body></html>
 
-state.maxHp??=120; state.strength??=12; state.agility??=9; state.wins??=0; state.eventProgress??=0; state.guildMembers??=1; state.recruited??=[]; state.settings??={sound:true,fx:true}; state.lang??='RU';
 `;
 
 export default {
