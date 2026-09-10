@@ -64,7 +64,7 @@ const INDEX_HTML = String.raw`<!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<script src="https://telegram.org/js/telegram-web-app.js"></script><script>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 
 /* ===== s15 PLAYABLE GAME LOOP ===== */
 (function(){
@@ -89,20 +89,20 @@ const ENEMIES=[
     const pimg=document.querySelector('.avatar img')?.src||'';
     const b={hp:e.hp,maxHp:e.hp,playerHp:Math.min(state.hp??state.maxHp,state.maxHp),maxPlayerHp:state.maxHp,turn:1,attack:null,defs:[],locked:false,auto:false,autoTimer:null,enemy:e};
     pt.textContent='⚔️ Бой — арена Sdolars';
-    pb.innerHTML=`<div class="vikingBattle">
+    pb.innerHTML=\`<div class="vikingBattle">
       <div class="fighters">
-       <div class="fighter"><img id="battlePlayerImg" src="${pimg}"><div class="fighterName">${chatEsc(pname)}</div><div class="fighterRole">⚔️ Уровень ${state.level}</div><div class="fhp"><i id="playerBar" style="width:${b.playerHp/state.maxHp*100}%"></i></div><div class="fhpText" id="playerHp">${b.playerHp}/${state.maxHp} HP</div></div>
-       <div class="fighter enemy"><img id="battleEnemyImg" src="${e.image||ENEMY_FALLBACK}" onerror="this.onerror=null;this.src=ENEMY_FALLBACK"><div class="fighterName">${e.name}</div><div class="fighterRole">👹 ${e.role}</div><div class="fhp"><i id="enemyBar" style="width:100%"></i></div><div class="fhpText" id="enemyHp">${e.hp}/${e.hp} HP</div></div>
+       <div class="fighter"><img id="battlePlayerImg" src="\${pimg}"><div class="fighterName">\${chatEsc(pname)}</div><div class="fighterRole">⚔️ Уровень \${state.level}</div><div class="fhp"><i id="playerBar" style="width:\${b.playerHp/state.maxHp*100}%"></i></div><div class="fhpText" id="playerHp">\${b.playerHp}/\${state.maxHp} HP</div></div>
+       <div class="fighter enemy"><img id="battleEnemyImg" src="\${e.image||ENEMY_FALLBACK}" onerror="this.onerror=null;this.src=ENEMY_FALLBACK"><div class="fighterName">\${e.name}</div><div class="fighterRole">👹 \${e.role}</div><div class="fhp"><i id="enemyBar" style="width:100%"></i></div><div class="fhpText" id="enemyHp">\${e.hp}/\${e.hp} HP</div></div>
       </div>
-      <div class="card"><b>Противник: ${e.name}</b><p>❤️ ${e.hp} HP · ⚔️ ${e.damage} · 🛡️ ${e.def}</p></div>
+      <div class="card"><b>Противник: \${e.name}</b><p>❤️ \${e.hp} HP · ⚔️ \${e.damage} · 🛡️ \${e.def}</p></div>
       <div class="autoRow"><button class="autoBtn" id="autoBtn" onclick="toggleAutoBattle()">▶ АВТОБОЙ</button></div>
       <div class="autoHint" id="autoHint">Автобой сам выбирает атаку и 2 зоны защиты.</div>
       <div class="card"><b>Ход: <span id="turnNo">1</span></b></div>
-      <div class="card"><b>Атака — выбери 1 зону</b><div class="zones" id="attacks">${Z.map((x,i)=>`<button onclick="pickAttack(${i},this)">${x}</button>`).join('')}</div></div>
-      <div class="card"><b>Защита — выбери 2 зоны</b><div class="zones" id="defs">${Z.map((x,i)=>`<button onclick="pickDef(${i},this)">${x}</button>`).join('')}</div><p>Выбрано: <b id="dc">0/2</b></p></div>
+      <div class="card"><b>Атака — выбери 1 зону</b><div class="zones" id="attacks">\${Z.map((x,i)=>\`<button onclick="pickAttack(\${i},this)">\${x}</button>\`).join('')}</div></div>
+      <div class="card"><b>Защита — выбери 2 зоны</b><div class="zones" id="defs">\${Z.map((x,i)=>\`<button onclick="pickDef(\${i},this)">\${x}</button>\`).join('')}</div><p>Выбрано: <b id="dc">0/2</b></p></div>
       <button class="goldBtn" onclick="strikeTurn()">⚔️ Сделать ход</button>
       <div class="card"><b>История боя</b><div id="battleLog">Выбери атаку и две зоны защиты.</div></div>
-    </div>`;
+    </div>\`;
     modal.classList.add('open'); window._battle=b;
   };
   window.strikeTurn=function(){
@@ -118,7 +118,7 @@ const ENEMIES=[
     b.hp=Math.max(0,b.hp-pd); b.playerHp=Math.max(0,b.playerHp-ed); state.hp=b.playerHp;
     document.getElementById('enemyBar').style.width=(b.hp/b.maxHp*100)+'%'; document.getElementById('playerBar').style.width=(b.playerHp/b.maxPlayerHp*100)+'%';
     document.getElementById('enemyHp').textContent=b.hp+'/'+b.maxHp+' HP'; document.getElementById('playerHp').textContent=b.playerHp+'/'+b.maxPlayerHp+' HP'; document.getElementById('turnNo').textContent=++b.turn;
-    const log=document.getElementById('battleLog'); log.innerHTML=`<div>⚔️ Ты: <b>${Z[b.attack]}</b> — ${hit?'попадание':'промах'}${crit?' · <b>КРИТ!</b>':''} · ${pd} урона</div><div>🛡️ Твоя защита: ${Z[b.defs[0]]}, ${Z[b.defs[1]]} — ${blocked?'блок':'не блок'}</div><div>👹 ${b.enemy.name}: ${Z[enemyAttack]} — ${dodge?'уклонение':blocked?'заблокировано':'нанесено '+ed}</div>`;
+    const log=document.getElementById('battleLog'); log.innerHTML=\`<div>⚔️ Ты: <b>\${Z[b.attack]}</b> — \${hit?'попадание':'промах'}\${crit?' · <b>КРИТ!</b>':''} · \${pd} урона</div><div>🛡️ Твоя защита: \${Z[b.defs[0]]}, \${Z[b.defs[1]]} — \${blocked?'блок':'не блок'}</div><div>👹 \${b.enemy.name}: \${Z[enemyAttack]} — \${dodge?'уклонение':blocked?'заблокировано':'нанесено '+ed}</div>\`;
     if(pd){document.querySelector('.enemy')?.classList.add('vikingHit');setTimeout(()=>document.querySelector('.enemy')?.classList.remove('vikingHit'),260)}
     if(b.hp<=0){b.locked=true;state.eventProgress=Math.min(10,(state.eventProgress||0)+1);const finish=window.territoryServerAction?window.territoryServerAction('battle.reward'):Promise.resolve(false);finish.then(ok=>{if(ok){log.innerHTML='<b>🏆 ПОБЕДА!</b> +'+b.enemy.reward+' 🪙 +'+b.enemy.xp+' XP<br>'+log.innerHTML;setTimeout(()=>{closeP();toast('🏆 Победа! Следующий противник сильнее.');},900)}else{b.locked=false;toast('Сервер не подтвердил награду')}});return}
     if(b.playerHp<=0){b.locked=true;const finish=window.territoryServerAction?window.territoryServerAction('battle.loss'):Promise.resolve(false);finish.then(ok=>{if(ok){log.innerHTML='<b>💀 ПОРАЖЕНИЕ</b><br>❤️ Восстановление рассчитано сервером.<br>'+log.innerHTML;setTimeout(()=>{closeP();toast('💀 Поражение. HP восстановлено сервером');},1100)}else{b.locked=false;toast('Сервер не подтвердил результат')}});return}
@@ -457,22 +457,22 @@ function battle(){
   const tg=window.Telegram?.WebApp?.initDataUnsafe?.user;
   const playerName=((tg?.first_name||'')+' '+(tg?.last_name||'')).trim()||'Игрок';
   const playerImg=document.querySelector('.avatar img')?.src||'';
-  const enemySvg='data:image/svg+xml;charset=UTF-8,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 300"><defs><radialGradient id="s" cx="50%" cy="35%"><stop stop-color="#a7c0b4"/><stop offset="1" stop-color="#405951"/></radialGradient><linearGradient id="f"><stop stop-color="#30474a"/><stop offset="1" stop-color="#0d1b21"/></linearGradient><filter id="g"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><rect width="320" height="300" rx="18" fill="#071522"/><path d="M20 300Q35 190 100 174H220Q285 190 300 300Z" fill="url(#f)" stroke="#667b7a" stroke-width="6"/><path d="M116 155h88v62h-88z" fill="url(#s)"/><path d="M70 70Q74 20 125 24Q160 5 195 24Q246 20 250 70l-14 91q-14 48-76 54-62-6-76-54z" fill="url(#s)" stroke="#29403b" stroke-width="7"/><path d="M91 63Q45 45 57 5q8 35 49 31zM229 63Q275 45 263 5q-8 35-49 31z" fill="#ded6b9" stroke="#6b6653" stroke-width="6"/><path d="M90 91q22-22 49 0M181 91q27-22 49 0" fill="none" stroke="#263b37" stroke-width="15" stroke-linecap="round"/><ellipse cx="121" cy="101" rx="15" ry="10" fill="#ffd84d" filter="url(#g)"/><ellipse cx="199" cy="101" rx="15" ry="10" fill="#ffd84d" filter="url(#g)"/><path d="M121 95v12M199 95v12" stroke="#1b211e" stroke-width="5"/><path d="M145 105q15-9 30 0l8 33q-23 18-46 0z" fill="#718e84" stroke="#314b45" stroke-width="5"/><path d="M105 145q55 35 110 0-3 55-55 57-52-2-55-57z" fill="#263a36" stroke="#172723" stroke-width="6"/><path d="M137 166q-12 35 9 24M183 166q12 35-9 24" fill="#eee5c7" stroke="#8e866c" stroke-width="5"/><path d="M96 54q64-43 128 0l-8 21q-56-31-112 0z" fill="#263f4c" stroke="#66818b" stroke-width="6"/><circle cx="160" cy="58" r="10" fill="#a8d5df"/><path d="M260 190q35 14 36 54" fill="none" stroke="#405951" stroke-width="24" stroke-linecap="round"/><path d="M293 238l12 34M282 238l3 38M271 236l-7 34" stroke="#a8bbb1" stroke-width="9" stroke-linecap="round"/></svg>`);
+  const enemySvg='data:image/svg+xml;charset=UTF-8,'+encodeURIComponent(\`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 300"><defs><radialGradient id="s" cx="50%" cy="35%"><stop stop-color="#a7c0b4"/><stop offset="1" stop-color="#405951"/></radialGradient><linearGradient id="f"><stop stop-color="#30474a"/><stop offset="1" stop-color="#0d1b21"/></linearGradient><filter id="g"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><rect width="320" height="300" rx="18" fill="#071522"/><path d="M20 300Q35 190 100 174H220Q285 190 300 300Z" fill="url(#f)" stroke="#667b7a" stroke-width="6"/><path d="M116 155h88v62h-88z" fill="url(#s)"/><path d="M70 70Q74 20 125 24Q160 5 195 24Q246 20 250 70l-14 91q-14 48-76 54-62-6-76-54z" fill="url(#s)" stroke="#29403b" stroke-width="7"/><path d="M91 63Q45 45 57 5q8 35 49 31zM229 63Q275 45 263 5q-8 35-49 31z" fill="#ded6b9" stroke="#6b6653" stroke-width="6"/><path d="M90 91q22-22 49 0M181 91q27-22 49 0" fill="none" stroke="#263b37" stroke-width="15" stroke-linecap="round"/><ellipse cx="121" cy="101" rx="15" ry="10" fill="#ffd84d" filter="url(#g)"/><ellipse cx="199" cy="101" rx="15" ry="10" fill="#ffd84d" filter="url(#g)"/><path d="M121 95v12M199 95v12" stroke="#1b211e" stroke-width="5"/><path d="M145 105q15-9 30 0l8 33q-23 18-46 0z" fill="#718e84" stroke="#314b45" stroke-width="5"/><path d="M105 145q55 35 110 0-3 55-55 57-52-2-55-57z" fill="#263a36" stroke="#172723" stroke-width="6"/><path d="M137 166q-12 35 9 24M183 166q12 35-9 24" fill="#eee5c7" stroke="#8e866c" stroke-width="5"/><path d="M96 54q64-43 128 0l-8 21q-56-31-112 0z" fill="#263f4c" stroke="#66818b" stroke-width="6"/><circle cx="160" cy="58" r="10" fill="#a8d5df"/><path d="M260 190q35 14 36 54" fill="none" stroke="#405951" stroke-width="24" stroke-linecap="round"/><path d="M293 238l12 34M282 238l3 38M271 236l-7 34" stroke="#a8bbb1" stroke-width="9" stroke-linecap="round"/></svg>\`);
   const b={hp:100,playerHp:state.maxHp,turn:1,locked:false,attack:null,defs:[],enemyAttack:null,enemyDefs:[],auto:false,autoTimer:null,ended:false};
   pt.textContent='Бой — Викингская арена';
-  pb.innerHTML=`<div class="vikingBattle">
+  pb.innerHTML=\`<div class="vikingBattle">
     <div class="fighters">
-      <div class="fighter" id="playerFighter"><img id="battlePlayerImg" src="${playerImg}"><div class="fighterName">${chatEsc(playerName)}</div><div class="fighterRole">⚔️ Викинг Sdolars</div><div class="fhp"><i id="playerBar" style="width:100%"></i></div><div class="fhpText" id="playerHp">${state.maxHp}/${state.maxHp} HP</div></div>
-      <div class="fighter enemy" id="enemyFighter"><img id="battleEnemyImg" src="${enemySvg}"><div class="fighterName">Ледяной тролль</div><div class="fighterRole">👹 Монстр</div><div class="fhp"><i id="enemyBar" style="width:100%"></i></div><div class="fhpText" id="enemyHp">100/100 HP</div></div>
+      <div class="fighter" id="playerFighter"><img id="battlePlayerImg" src="\${playerImg}"><div class="fighterName">\${chatEsc(playerName)}</div><div class="fighterRole">⚔️ Викинг Sdolars</div><div class="fhp"><i id="playerBar" style="width:100%"></i></div><div class="fhpText" id="playerHp">\${state.maxHp}/\${state.maxHp} HP</div></div>
+      <div class="fighter enemy" id="enemyFighter"><img id="battleEnemyImg" src="\${enemySvg}"><div class="fighterName">Ледяной тролль</div><div class="fighterRole">👹 Монстр</div><div class="fhp"><i id="enemyBar" style="width:100%"></i></div><div class="fhpText" id="enemyHp">100/100 HP</div></div>
     </div>
     <div class="autoRow"><button class="autoBtn" id="autoBtn" onclick="toggleAutoBattle()">▶ АВТОБОЙ</button></div>
     <div class="autoHint" id="autoHint">Автобой сам выбирает атаку и 2 зоны защиты каждый ход.</div>
     <div class="card"><b>Ход: <span id="turnNo">1</span></b></div>
-    <div class="card"><b>Атака — выбери 1 зону</b><div class="zones" id="attacks">${ZONES.map((x,i)=>'<button onclick="pickAttack('+i+',this)">'+x+'</button>').join('')}</div></div>
-    <div class="card"><b>Защита — выбери 2 зоны</b><div class="zones" id="defs">${ZONES.map((x,i)=>'<button onclick="pickDef('+i+',this)">'+x+'</button>').join('')}</div><p>Выбрано: <b id="dc">0/2</b></p></div>
+    <div class="card"><b>Атака — выбери 1 зону</b><div class="zones" id="attacks">\${ZONES.map((x,i)=>'<button onclick="pickAttack('+i+',this)">'+x+'</button>').join('')}</div></div>
+    <div class="card"><b>Защита — выбери 2 зоны</b><div class="zones" id="defs">\${ZONES.map((x,i)=>'<button onclick="pickDef('+i+',this)">'+x+'</button>').join('')}</div><p>Выбрано: <b id="dc">0/2</b></p></div>
     <button class="goldBtn" id="strikeBtn" onclick="strikeTurn()">⚔️ Сделать ход</button>
     <div class="card"><b>История боя</b><div id="battleLog">Выберите атаку и две зоны защиты.</div></div>
-  </div>`;
+  </div>\`;
   modal.classList.add('open');window._battle=b;
 }
 function toggleAutoBattle(){const b=window._battle;if(!b||b.ended)return;if(b.auto){stopAutoBattle();return}b.auto=true;const btn=document.getElementById('autoBtn'),hint=document.getElementById('autoHint');if(btn){btn.classList.add('on');btn.textContent='■ ОСТАНОВИТЬ АВТОБОЙ'}if(hint)hint.textContent='Автобой включён — ходы выполняются автоматически.';autoBattleStep()}
@@ -529,20 +529,20 @@ const ENEMIES=[
     const pimg=document.querySelector('.avatar img')?.src||'';
     const b={hp:e.hp,maxHp:e.hp,playerHp:Math.min(state.hp??state.maxHp,state.maxHp),maxPlayerHp:state.maxHp,turn:1,attack:null,defs:[],locked:false,auto:false,autoTimer:null,enemy:e};
     pt.textContent='⚔️ Бой — арена Sdolars';
-    pb.innerHTML=`<div class="vikingBattle">
+    pb.innerHTML=\`<div class="vikingBattle">
       <div class="fighters">
-       <div class="fighter"><img id="battlePlayerImg" src="${pimg}"><div class="fighterName">${chatEsc(pname)}</div><div class="fighterRole">⚔️ Уровень ${state.level}</div><div class="fhp"><i id="playerBar" style="width:${b.playerHp/state.maxHp*100}%"></i></div><div class="fhpText" id="playerHp">${b.playerHp}/${state.maxHp} HP</div></div>
-       <div class="fighter enemy"><img id="battleEnemyImg" src="${e.image||ENEMY_FALLBACK}" onerror="this.onerror=null;this.src=ENEMY_FALLBACK"><div class="fighterName">${e.name}</div><div class="fighterRole">👹 ${e.role}</div><div class="fhp"><i id="enemyBar" style="width:100%"></i></div><div class="fhpText" id="enemyHp">${e.hp}/${e.hp} HP</div></div>
+       <div class="fighter"><img id="battlePlayerImg" src="\${pimg}"><div class="fighterName">\${chatEsc(pname)}</div><div class="fighterRole">⚔️ Уровень \${state.level}</div><div class="fhp"><i id="playerBar" style="width:\${b.playerHp/state.maxHp*100}%"></i></div><div class="fhpText" id="playerHp">\${b.playerHp}/\${state.maxHp} HP</div></div>
+       <div class="fighter enemy"><img id="battleEnemyImg" src="\${e.image||ENEMY_FALLBACK}" onerror="this.onerror=null;this.src=ENEMY_FALLBACK"><div class="fighterName">\${e.name}</div><div class="fighterRole">👹 \${e.role}</div><div class="fhp"><i id="enemyBar" style="width:100%"></i></div><div class="fhpText" id="enemyHp">\${e.hp}/\${e.hp} HP</div></div>
       </div>
-      <div class="card"><b>Противник: ${e.name}</b><p>❤️ ${e.hp} HP · ⚔️ ${e.damage} · 🛡️ ${e.def}</p></div>
+      <div class="card"><b>Противник: \${e.name}</b><p>❤️ \${e.hp} HP · ⚔️ \${e.damage} · 🛡️ \${e.def}</p></div>
       <div class="autoRow"><button class="autoBtn" id="autoBtn" onclick="toggleAutoBattle()">▶ АВТОБОЙ</button></div>
       <div class="autoHint" id="autoHint">Автобой сам выбирает атаку и 2 зоны защиты.</div>
       <div class="card"><b>Ход: <span id="turnNo">1</span></b></div>
-      <div class="card"><b>Атака — выбери 1 зону</b><div class="zones" id="attacks">${Z.map((x,i)=>`<button onclick="pickAttack(${i},this)">${x}</button>`).join('')}</div></div>
-      <div class="card"><b>Защита — выбери 2 зоны</b><div class="zones" id="defs">${Z.map((x,i)=>`<button onclick="pickDef(${i},this)">${x}</button>`).join('')}</div><p>Выбрано: <b id="dc">0/2</b></p></div>
+      <div class="card"><b>Атака — выбери 1 зону</b><div class="zones" id="attacks">\${Z.map((x,i)=>\`<button onclick="pickAttack(\${i},this)">\${x}</button>\`).join('')}</div></div>
+      <div class="card"><b>Защита — выбери 2 зоны</b><div class="zones" id="defs">\${Z.map((x,i)=>\`<button onclick="pickDef(\${i},this)">\${x}</button>\`).join('')}</div><p>Выбрано: <b id="dc">0/2</b></p></div>
       <button class="goldBtn" onclick="strikeTurn()">⚔️ Сделать ход</button>
       <div class="card"><b>История боя</b><div id="battleLog">Выбери атаку и две зоны защиты.</div></div>
-    </div>`;
+    </div>\`;
     modal.classList.add('open'); window._battle=b;
   };
   window.strikeTurn=function(){
@@ -558,7 +558,7 @@ const ENEMIES=[
     b.hp=Math.max(0,b.hp-pd); b.playerHp=Math.max(0,b.playerHp-ed); state.hp=b.playerHp;
     document.getElementById('enemyBar').style.width=(b.hp/b.maxHp*100)+'%'; document.getElementById('playerBar').style.width=(b.playerHp/b.maxPlayerHp*100)+'%';
     document.getElementById('enemyHp').textContent=b.hp+'/'+b.maxHp+' HP'; document.getElementById('playerHp').textContent=b.playerHp+'/'+b.maxPlayerHp+' HP'; document.getElementById('turnNo').textContent=++b.turn;
-    const log=document.getElementById('battleLog'); log.innerHTML=`<div>⚔️ Ты: <b>${Z[b.attack]}</b> — ${hit?'попадание':'промах'}${crit?' · <b>КРИТ!</b>':''} · ${pd} урона</div><div>🛡️ Твоя защита: ${Z[b.defs[0]]}, ${Z[b.defs[1]]} — ${blocked?'блок':'не блок'}</div><div>👹 ${b.enemy.name}: ${Z[enemyAttack]} — ${dodge?'уклонение':blocked?'заблокировано':'нанесено '+ed}</div>`;
+    const log=document.getElementById('battleLog'); log.innerHTML=\`<div>⚔️ Ты: <b>\${Z[b.attack]}</b> — \${hit?'попадание':'промах'}\${crit?' · <b>КРИТ!</b>':''} · \${pd} урона</div><div>🛡️ Твоя защита: \${Z[b.defs[0]]}, \${Z[b.defs[1]]} — \${blocked?'блок':'не блок'}</div><div>👹 \${b.enemy.name}: \${Z[enemyAttack]} — \${dodge?'уклонение':blocked?'заблокировано':'нанесено '+ed}</div>\`;
     if(pd){document.querySelector('.enemy')?.classList.add('vikingHit');setTimeout(()=>document.querySelector('.enemy')?.classList.remove('vikingHit'),260)}
     if(b.hp<=0){b.locked=true;state.eventProgress=Math.min(10,(state.eventProgress||0)+1);const finish=window.territoryServerAction?window.territoryServerAction('battle.reward'):Promise.resolve(false);finish.then(ok=>{if(ok){log.innerHTML='<b>🏆 ПОБЕДА!</b> +'+b.enemy.reward+' 🪙 +'+b.enemy.xp+' XP<br>'+log.innerHTML;setTimeout(()=>{closeP();toast('🏆 Победа! Следующий противник сильнее.');},900)}else{b.locked=false;toast('Сервер не подтвердил награду')}});return}
     if(b.playerHp<=0){b.locked=true;const finish=window.territoryServerAction?window.territoryServerAction('battle.loss'):Promise.resolve(false);finish.then(ok=>{if(ok){log.innerHTML='<b>💀 ПОРАЖЕНИЕ</b><br>❤️ Восстановление рассчитано сервером.<br>'+log.innerHTML;setTimeout(()=>{closeP();toast('💀 Поражение. HP восстановлено сервером');},1100)}else{b.locked=false;toast('Сервер не подтвердил результат')}});return}
@@ -669,7 +669,7 @@ const ENEMIES=[
     const list=(window.__pvpPlayers||[]).filter(x=>x&&x.playerId).slice(0,5);
     const en=window.state?.lang==='EN';
     let html='<div class="cityOnlineCard"><div class="cityOnlineHead"><span class="cityLiveDot"></span><b>'+(en?'PLAYERS ONLINE':'ИГРОКИ ОНЛАЙН')+'</b><span>'+(list.length?list.length:'0')+'</span><span class="cityOnlineStatus">'+(window.chatConnected?'● LIVE':'○ OFFLINE')+'</span><button class="cityPlayersBtn" onclick="openP(&quot;messages&quot;)">'+(en?'ALL':'ВСЕ')+'</button></div>';
-    if(list.length){html+='<div class="cityOnlineList">'+list.map(x=>'<span class="cityPlayer"><i></i>'+escCity(x.name)+' <button class="cityDuel" onclick="cityPvpChallenge(\''+escCity(x.playerId)+'\',\''+escCity(x.name)+'\')">⚔️ '+(en?'DUEL':'ДУЭЛЬ')+'</button></span>').join('')+'</div>';}
+    if(list.length){html+='<div class="cityOnlineList">'+list.map(x=>'<span class="cityPlayer"><i></i>'+escCity(x.name)+' <button class="cityDuel" onclick="cityPvpChallenge(\\''+escCity(x.playerId)+'\\',\\''+escCity(x.name)+'\\')">⚔️ '+(en?'DUEL':'ДУЭЛЬ')+'</button></span>').join('')+'</div>';}
     else html+='<div class="cityEmpty">'+(window.chatConnected?(en?'No other players online yet':'Пока нет других игроков онлайн'):(en?'Connect the server to see players':'Подключи сервер, чтобы видеть игроков'))+'</div>';
     html+='</div>';box.innerHTML=html;
   };
@@ -728,7 +728,7 @@ const ENEMIES=[
   const esc2=x=>String(x??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
   const tr2=(ru,en)=>state.lang==='EN'?en:ru;
   function refreshView(k){try{openP(k)}catch(e){}}
-  function globalMore(){const en=state.lang==='EN';return '<div class="card"><b>🌍 '+tr2('Мир Sdolars','Sdolars World')+'</b><p>'+tr2('Город разделён на районы. Здесь открываются арена, рынок, кузница, таверна и события.','The city is divided into districts: arena, market, forge, tavern and events.')+'</p><div class="grid2"><button onclick="s32World()">🗺️ '+tr2('Районы','Districts')+'</button><button onclick="s32Leaderboard()">🏆 '+tr2('Рейтинг','Leaderboard')+'</button><button onclick="openP(&quot;guild&quot;)">👥 '+tr2('Гильдия','Guild')+'</button><button onclick="openP(&quot;messages&quot;)">✉ '+tr2('Почта и чат','Mail & Chat')+'</button></div></div><div class="card"><b>🎯 '+tr2('Прогресс','Progress')+'</b><p>'+tr2('Победы','Wins')+': <b>'+state.wins+'</b> · '+tr2('Бои','Battles')+': <b>'+state.battles+'</b> · Rating: <b>'+((state.rating||1000))+'</b></p></div>'}
+  function globalMore(){const en=state.lang==='EN';return '<div class="card"><b>🌍 '+tr2('Мир Sdolars','Sdolars World')+'</b><p>'+tr2('Город разделён на районы. Здесь открываются арена, рынок, кузница, таверна и события.','The city is divided into districts: arena, market, forge, tavern and events.')+'</p><div class="grid2"><button onclick="s32World()">🗺️ '+tr2('Районы','Districts')+'</button><button onclick="s32Leaderboard()">🏆 '+tr2('Рейтинг','Leaderboard')+'</button><button onclick="openP('guild')">👥 '+tr2('Гильдия','Guild')+'</button><button onclick="openP('messages')">✉ '+tr2('Почта и чат','Mail & Chat')+'</button></div></div><div class="card"><b>🎯 '+tr2('Прогресс','Progress')+'</b><p>'+tr2('Победы','Wins')+': <b>'+state.wins+'</b> · '+tr2('Бои','Battles')+': <b>'+state.battles+'</b> · Rating: <b>'+((state.rating||1000))+'</b></p></div>'}
   function world(){const en=state.lang==='EN';return '<div class="card"><b>🗺️ '+tr2('Районы Sdolars','Sdolars Districts')+'</b><p>🏰 '+tr2('Центральная площадь','Central Square')+'</p><button onclick="battle()">⚔️ '+tr2('Арена','Arena')+'</button><button onclick="openP(\'shop\')">🛒 '+tr2('Рынок','Market')+'</button><button onclick="openP(\'forge\')">⚒️ '+tr2('Кузница','Forge')+'</button><button onclick="openP(\'tavern\')">🍺 '+tr2('Таверна','Tavern')+'</button></div><div class="card"><b>🏘️ '+tr2('Открывающиеся районы','Unlockable districts')+'</b><p>🌲 '+tr2('Северный лес · доступен','North Forest · available')+'</p><p>⚓ '+tr2('Порт · уровень 8','Harbor · level 8')+'</p><p>🏭 '+tr2('Промзона · уровень 12','Industrial Zone · level 12')+'</p><p>🏛️ '+tr2('Старая крепость · уровень 18','Old Fortress · level 18')+'</p></div>'}
   async function leaderboard(){let rows=[];try{const r=await fetch('/hub/leaderboard',{cache:'no-store'});const j=await r.json();rows=j.players||[]}catch(e){}const en=state.lang==='EN';let h='<div class="card"><b>🏆 '+tr2('Рейтинг бойцов','Warrior Leaderboard')+'</b>';if(!rows.length)h+='<p>'+tr2('Рейтинг появится после первых подключений игроков.','Leaderboard will appear after players connect.')+'</p>';rows.forEach((x,i)=>h+='<p><b>#'+(i+1)+' '+esc2(x.name)+'</b> · '+tr2('ур.','Lv.')+' '+x.level+' · '+x.wins+' '+tr2('побед','wins')+' · <b>'+x.rating+'</b></p>');return h+'</div><button onclick="openP(\'more\')">← '+tr2('Назад','Back')+'</button>'}
   window.s32World=()=>{pt.textContent=tr2('Районы Sdolars','Sdolars Districts');pb.innerHTML=world();modal.classList.add('open');applyLanguage()};
@@ -850,7 +850,7 @@ const ENEMIES=[
     card('<b>📦 '+tr('Ресурсы','Materials')+'</b><p>⛓️ '+(state.materials?.iron||0)+' · 🪵 '+(state.materials?.wood||0)+' · 🧵 '+(state.materials?.leather||0)+' · 🌿 '+(state.materials?.herbs||0)+'</p>');}
   function missions(){const ms=state.dailyMissions?.items||[];let h=card('<b>🎯 '+tr('Ежедневные задания','Daily Missions')+'</b><p>'+tr('Задания обновляются каждый день.','Missions refresh every day.')+'</p>');if(!ms.length)return h+card(tr('Загрузка заданий...','Loading missions...'));const names={wins:['⚔️','Победы','Wins'],scout:['🔎','Исследования','Scouting'],forge:['⚒️','Улучшения кузницы','Forge upgrades']};ms.forEach(m=>{const n=names[m.id]||['🎯',m.id,m.id];h+=card('<b>'+n[0]+' '+tr(n[1],n[2])+'</b><p>'+m.progress+'/'+m.goal+' · 🎁 '+m.reward+' 🪙 · ⭐ '+m.xp+' XP</p><button '+((m.claimed||m.progress<m.goal)?'disabled ':'')+'onclick="s34Mission(\''+e(m.id)+'\')">'+(m.claimed?tr('Получено','Claimed'):tr('Забрать','Claim'))+'</button></div>')});return h}
   function craft(){const mats=state.materials||{};const recipes=[['sharpened_axe','🪓','Заточённый топор','Sharpened Axe','+26 урон','500 🪙 · ⛓️3 · 🪵2'],['hunter_armor','🥋','Охотничья броня','Hunter Armor','+22 защита','450 🪙 · ⛓️2 · 🧵3'],['medkit_pack','🩹','Большая аптечка','Large Medkit','2 использования','120 🪙 · 🌿2']];let h=card('<b>⚒️ '+tr('Мастерская','Workshop')+'</b><p>⛓️ '+(mats.iron||0)+' · 🪵 '+(mats.wood||0)+' · 🧵 '+(mats.leather||0)+' · 🌿 '+(mats.herbs||0)+'</p>');recipes.forEach(r=>h+=card('<b>'+r[1]+' '+tr(r[2],r[3])+'</b><p>'+tr(r[4],r[4])+' · '+r[5]+'</p><button class="goldBtn" onclick="s34Craft(\''+r[0]+'\')">🔨 '+tr('Создать','Craft')+'</button></div>'));return h}
-  function season(){const sr=state.season||{};const rating=Number(state.rating||sr.rating||1000);const next=rating<1200?1200:rating<1500?1500:rating<1800?1800:2000;return card('<b>🏆 '+tr('Сезон Sdolars','Sdolars Season')+'</b><p>'+tr('Текущий рейтинг','Current rating')+': <b>'+rating+'</b></p><p>'+tr('Лучший рейтинг','Best rating')+': <b>'+(sr.bestRating||rating)+'</b> · '+tr('Победы сезона','Season wins')+': <b>'+(sr.wins||0)+'</b></p><div class="fhp"><i style="width:'+Math.min(100,rating/next*100)+'%"></i></div><p>'+tr('Следующая лига','Next league')+': <b>'+next+'</b></p>')+card('<b>🥇 '+tr('Лиги','Leagues')+'</b><p>🟤 0–1199 · ⚪ 1200–1499 · 🟡 1500–1799 · 🔵 1800–1999 · 🔴 2000+</p>');}
+  function season(){const sr=state.season||{};const rating=Number(state.rating||sr.rating||1000);const next=rating<1200?1200:rating<1500?1500:rating<1800?1800:2000;return card('<b>🏆 '+tr('Сезон Sdolars','Sdolars Season')+'</b><p>'+tr('Текущий рейтинг','Current rating')+': <b>'+rating</b></p><p>'+tr('Лучший рейтинг','Best rating')+': <b>'+(sr.bestRating||rating)+'</b> · '+tr('Победы сезона','Season wins')+': <b>'+(sr.wins||0)+'</b></p><div class="fhp"><i style="width:'+Math.min(100,rating/next*100)+'%"></i></div><p>'+tr('Следующая лига','Next league')+': <b>'+next+'</b></p>')+card('<b>🥇 '+tr('Лиги','Leagues')+'</b><p>🟤 0–1199 · ⚪ 1200–1499 · 🟡 1500–1799 · 🔵 1800–1999 · 🔴 2000+</p>');}
   function guild(){return card('<b>👥 '+tr('Гильдия','Guild')+'</b><p>'+tr('Гильдия','Guild')+': <b>'+e(state.guildName||tr('Нет гильдии','No guild'))+'</b></p><p>⭐ '+tr('Уровень','Level')+': '+(state.guildLevel||1)+' · 💰 '+tr('Вклад','Contribution')+': '+(state.guildContribution||0)+'</p>')+'<div class="grid2"><button onclick="s34Guild(100)">💰 +100</button><button onclick="s34Guild(500)">💰 +500</button></div>'}
   window.s34Character=()=>pane(tr('Персонаж','Character'),stats());
   window.s34Missions=()=>pane(tr('Ежедневные задания','Daily Missions'),missions());
@@ -928,7 +928,6 @@ const ENEMIES=[
     return previousOpenP(k);
   };
 })();
-</script>
 <script>
 /* ===== s39 SERVER AUTHORITATIVE PVE ===== */
 (function(){
@@ -939,6 +938,8 @@ const ENEMIES=[
   window.strikeTurn=async function(){const b=window._battle;if(!b||b.locked||b.hp<=0||b.playerHp<=0)return;if(b.attack===null||b.defs.length!==2){toast('Выбери атаку и 2 зоны защиты');return}if(!b.serverId)return oldStrike();b.locked=true;const j=await api('battle.move',{battleId:b.serverId,attack:b.attack,defs:b.defs});if(!j?.battle){b.locked=false;toast('Ход не принят сервером');return}const x=j.battle;if(j.player)Object.assign(state,j.player);b.hp=x.enemyHp;b.playerHp=x.playerHp;b.turn=x.turn;state.hp=b.playerHp;const Z=window.ZONES||['Голова','Грудь','Живот','Пояс','Ноги'];const eb=document.getElementById('enemyBar'),pb=document.getElementById('playerBar');if(eb)eb.style.width=(b.hp/b.maxHp*100)+'%';if(pb)pb.style.width=(b.playerHp/b.maxPlayerHp*100)+'%';document.getElementById('enemyHp').textContent=b.hp+'/'+b.maxHp+' HP';document.getElementById('playerHp').textContent=b.playerHp+'/'+b.maxPlayerHp+' HP';document.getElementById('turnNo').textContent=b.turn;const log=document.getElementById('battleLog');if(log)log.innerHTML='<div>⚔️ '+Z[x.attack]+' — '+(x.hit?'попадание':'промах')+(x.crit?' · <b>КРИТ!</b>':'')+' · '+x.playerDamage+' урона</div><div>🛡️ '+Z[x.defs[0]]+', '+Z[x.defs[1]]+' — '+(x.blocked?'блок':'не блок')+'</div><div>👹 '+Z[x.enemyAttack]+' — '+(x.dodge?'уклонение':x.blocked?'заблокировано':'-'+x.enemyDamage+' HP')+'</div>';if(x.result==='win'){log.innerHTML='<b>🏆 ПОБЕДА!</b> +'+x.reward.coins+' 🪙 +'+x.reward.xp+' XP<br>'+log.innerHTML;toast('🏆 Победа!');setTimeout(closeP,900);return}if(x.result==='loss'){log.innerHTML='<b>💀 ПОРАЖЕНИЕ</b><br>'+log.innerHTML;toast('💀 Поражение');setTimeout(closeP,1000);return}b.attack=null;b.defs=[];document.querySelectorAll('#attacks button,#defs button').forEach(q=>q.classList.remove('sel'));document.getElementById('dc').textContent='0/2';setTimeout(()=>{b.locked=false;if(b.auto)autoBattleStep()},220);if(typeof save==='function')save()};
 })();
 </script></body></html>
+
+state.maxHp??=120; state.strength??=12; state.agility??=9; state.wins??=0; state.eventProgress??=0; state.guildMembers??=1; state.recruited??=[]; state.settings??={sound:true,fx:true}; state.lang??='RU';
 `;
 
 export default {
