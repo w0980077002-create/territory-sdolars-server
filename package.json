@@ -1,1 +1,10 @@
-{"name":"territory-sdolars-server","version":"1.0.0","private":true,"scripts":{"dev":"wrangler dev","deploy":"wrangler deploy"},"devDependencies":{"wrangler":"^4.33.1"}}
+{
+  "name": "territory-sdolars-s30",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": { "wrangler": "^4.33.1" }
+}
