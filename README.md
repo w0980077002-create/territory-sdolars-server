@@ -1,2 +1,9 @@
-Territory — Sdolars s50
-Real scene separated from UI; no full-page screenshot as background. Casino removed. Existing server/game logic preserved.
+# Territory — Sdolars s51
+
+Clean replacement build.
+- Tactical 5-zone combat
+- Two defense zones per turn
+- Mobile vertical UI
+- Sdolars setting
+- Cloudflare Worker + Durable Object
+- GitHub Actions deployment
