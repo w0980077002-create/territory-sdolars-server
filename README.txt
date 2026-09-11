@@ -1,5 +1,3 @@
-Territory — Sdolars s30
-
-Single-file Cloudflare Worker build.
-The game UI is embedded into worker.js so the deployment requires only worker.js + wrangler.jsonc + package.json.
-Includes Durable Object GameHub with SQLite, Telegram WebApp authentication, online players, WebSocket chat and PvP foundation.
+Territory — Sdolars
+Version s48
+Restored from the saved s47 working build. The main game is self-contained in index.html.
