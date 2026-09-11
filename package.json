@@ -1,7 +1,10 @@
 {
-  "name": "territory-sdolars",
+  "name": "territory-sdolars-s35",
   "version": "1.0.0",
   "private": true,
-  "scripts": {"dev": "wrangler dev", "deploy": "wrangler deploy"},
-  "devDependencies": {"wrangler": "^4.33.1"}
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": { "wrangler": "^4.33.1" }
 }
