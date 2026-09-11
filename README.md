@@ -1,13 +1,5 @@
-# Territory — Sdolars s48
+Territory — Sdolars s49
 
-Это **замена рабочего проекта**, собранная из последней сохранённой рабочей базы s47, а не новая игра с нуля.
+Replacement build based on the saved working s47 project. Existing gameplay/server functions are preserved; only the mobile-game scene/UI layer is upgraded. Casino is removed.
 
-В репозитории используются три рабочих файла: `worker.js`, `package.json`, `wrangler.jsonc`.
-
-Сохранены серверная авторизация Telegram, Durable Object, серверная синхронизация, город Sdolars, PvE/PvP, тактический бой, инвентарь/экипировка, задания, кузница, гильдия, рейтинг, чат и RU/EN.
-
-Казино в исходной базе не найдено и не добавляется.
-
-## GitHub / Cloudflare
-
-Загрузить эти три файла в корень рабочего репозитория, затем выполнить обычный Cloudflare Worker deploy через GitHub Actions/Cloudflare.
+Deploy: worker.js, package.json, wrangler.jsonc. index.html is the matching client source embedded into worker.js.
