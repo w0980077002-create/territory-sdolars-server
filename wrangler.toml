@@ -6,6 +6,9 @@ compatibility_date = "2026-09-17"
 name = "GAME_HUB"
 class_name = "GameHub"
 
-[exports.GameHub]
-type = "durable-object"
-storage = "sqlite"
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GameHub"]
+
+[observability]
+enabled = true
