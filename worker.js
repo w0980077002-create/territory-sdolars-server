@@ -168,7 +168,9 @@ function normalizeState(input) {
     "coins", "gems", "energy", "combatStone", "hp", "maxHp",
     "level", "exp", "maxExp", "bonusDamage", "strength",
     "agility", "defense", "freePoints", "alexQuest", "cityRep",
-    "wins", "losses", "battles"
+    "merchantRep", "marketDay", "wins", "losses", "battles",
+    "gameDice", "gameRolls", "gameSteps", "gameEventVersion",
+    "gameTaskProgress", "gameGiftDate", "gameEndsAt", "gameSaveVersion"
   ];
 
   for (const key of numeric) {
@@ -185,6 +187,19 @@ function normalizeState(input) {
     state.inventory = input.inventory
       .filter((x) => typeof x === "string")
       .slice(0, 200);
+  }
+
+  const arrays = [
+    "gameMilestones", "gameTaskClaims", "gamePanelClaims", "gameJackpotClaims"
+  ];
+  for (const key of arrays) {
+    if (Array.isArray(input[key])) {
+      state[key] = input[key].slice(0, 500);
+    }
+  }
+
+  if (typeof input.gameGiftDate === "string" && input.gameGiftDate.length <= 32) {
+    state.gameGiftDate = input.gameGiftDate;
   }
 
   return state;

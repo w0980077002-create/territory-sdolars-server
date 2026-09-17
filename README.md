@@ -89,3 +89,10 @@ TELEGRAM_BOT_TOKEN
 5. Сделать загрузку профиля при старте.
 6. Сделать автоматическое сохранение прогресса.
 7. Позже перенести важные игровые действия на сервер, чтобы клиент не мог просто изменить монеты/опыт через JavaScript.
+
+
+## Frontend integration
+The current Territory frontend posts Telegram `initData` to `/api/auth` and `/api/save`. The frontend uses the Worker URL:
+`https://territory-sdolars-server.w0660077702.workers.dev`
+
+This V2 keeps the additional game-board progress fields used by the current frontend.
