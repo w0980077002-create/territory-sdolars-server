@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 
 const MAX_AUTH_AGE_SECONDS = 24 * 60 * 60;
 const MAX_STATE_BYTES = 64 * 1024;
-const BOT_USERNAME = "TerritoryGameBot";
+const BOT_USERNAME = "TeritoryGameBot";
 
 const DEFAULT_STATE = {
   coins: 1000,
