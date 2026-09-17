@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 
 const MAX_AUTH_AGE_SECONDS = 24 * 60 * 60;
 const MAX_STATE_BYTES = 64 * 1024;
+const BOT_USERNAME = "TerritoryGameBot";
 
 const DEFAULT_STATE = {
   coins: 1000,
@@ -63,13 +64,7 @@ async function hmacHex(keyBytes, message) {
     false,
     ["sign"]
   );
-  return hex(
-    await crypto.subtle.sign(
-      "HMAC",
-      key,
-      new TextEncoder().encode(message)
-    )
-  );
+  return hex(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message)));
 }
 
 async function validateTelegramInitData(initData, botToken) {
@@ -85,14 +80,10 @@ async function validateTelegramInitData(initData, botToken) {
   }
 
   const receivedHash = params.get("hash");
-  if (!receivedHash) {
-    return { ok: false, error: "Missing Telegram hash" };
-  }
+  if (!receivedHash) return { ok: false, error: "Missing Telegram hash" };
 
   const authDate = Number(params.get("auth_date"));
-  if (!Number.isFinite(authDate)) {
-    return { ok: false, error: "Missing auth_date" };
-  }
+  if (!Number.isFinite(authDate)) return { ok: false, error: "Missing auth_date" };
 
   const age = Math.floor(Date.now() / 1000) - authDate;
   if (age < -60 || age > MAX_AUTH_AGE_SECONDS) {
@@ -105,9 +96,6 @@ async function validateTelegramInitData(initData, botToken) {
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
 
-  // Telegram Mini Apps:
-  // secret_key = HMAC-SHA256(bot_token, "WebAppData")
-  // hash = HMAC-SHA256(data_check_string, secret_key)
   const tokenKey = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(botToken),
@@ -122,10 +110,7 @@ async function validateTelegramInitData(initData, botToken) {
     new TextEncoder().encode("WebAppData")
   );
 
-  const calculatedHash = await hmacHex(
-    new Uint8Array(secretKey),
-    dataCheckString
-  );
+  const calculatedHash = await hmacHex(new Uint8Array(secretKey), dataCheckString);
 
   if (!timingSafeEqual(calculatedHash, receivedHash.toLowerCase())) {
     return { ok: false, error: "Invalid Telegram signature" };
@@ -146,11 +131,7 @@ async function validateTelegramInitData(initData, botToken) {
 }
 
 function displayName(user) {
-  const full = [user.first_name, user.last_name]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-
+  const full = [user.first_name, user.last_name].filter(Boolean).join(" ").trim();
   if (full) return full;
   if (user.username) return `@${user.username}`;
   return "Territory";
@@ -166,17 +147,15 @@ function normalizeState(input) {
 
   const numeric = [
     "coins", "gems", "energy", "combatStone", "hp", "maxHp",
-    "level", "exp", "maxExp", "bonusDamage", "strength",
-    "agility", "defense", "freePoints", "alexQuest", "cityRep",
-    "merchantRep", "marketDay", "wins", "losses", "battles",
-    "gameDice", "gameRolls", "gameSteps", "gameEventVersion",
-    "gameTaskProgress", "gameGiftDate", "gameEndsAt", "gameSaveVersion"
+    "level", "exp", "maxExp", "bonusDamage", "strength", "agility",
+    "defense", "freePoints", "alexQuest", "cityRep", "merchantRep",
+    "marketDay", "wins", "losses", "battles", "gameDice", "gameRolls",
+    "gameSteps", "gameEventVersion", "gameTaskProgress", "gameGiftDate",
+    "gameEndsAt", "gameSaveVersion"
   ];
 
   for (const key of numeric) {
-    if (Number.isFinite(Number(input[key]))) {
-      state[key] = Number(input[key]);
-    }
+    if (Number.isFinite(Number(input[key]))) state[key] = Number(input[key]);
   }
 
   if (typeof input.weapon === "string" && input.weapon.length <= 80) {
@@ -184,18 +163,11 @@ function normalizeState(input) {
   }
 
   if (Array.isArray(input.inventory)) {
-    state.inventory = input.inventory
-      .filter((x) => typeof x === "string")
-      .slice(0, 200);
+    state.inventory = input.inventory.filter((x) => typeof x === "string").slice(0, 200);
   }
 
-  const arrays = [
-    "gameMilestones", "gameTaskClaims", "gamePanelClaims", "gameJackpotClaims"
-  ];
-  for (const key of arrays) {
-    if (Array.isArray(input[key])) {
-      state[key] = input[key].slice(0, 500);
-    }
+  for (const key of ["gameMilestones", "gameTaskClaims", "gamePanelClaims", "gameJackpotClaims"]) {
+    if (Array.isArray(input[key])) state[key] = input[key].slice(0, 500);
   }
 
   if (typeof input.gameGiftDate === "string" && input.gameGiftDate.length <= 32) {
@@ -203,6 +175,44 @@ function normalizeState(input) {
   }
 
   return state;
+}
+
+async function telegramApi(method, body, botToken) {
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    return { ok: false, error: `Telegram API HTTP ${response.status}` };
+  }
+
+  return data;
+}
+
+async function handleTelegramUpdate(update, env) {
+  const message = update?.message;
+  const text = typeof message?.text === "string" ? message.text.trim() : "";
+  const chatId = message?.chat?.id;
+
+  if (chatId == null || !text) return;
+
+  const command = text.split(/\s+/)[0].split("@")[0].toLowerCase();
+  if (command !== "/start" && command !== "/game") return;
+
+  const launchUrl = `https://t.me/${BOT_USERNAME}?startapp`;
+
+  await telegramApi("sendMessage", {
+    chat_id: chatId,
+    text: "🏰 Territory — Sdolars\n\nДобро пожаловать! Открой игру и продолжай свой путь.",
+    reply_markup: {
+      inline_keyboard: [[{ text: "🎮 ИГРАТЬ", url: launchUrl }]]
+    }
+  }, env.TELEGRAM_BOT_TOKEN);
 }
 
 export class GameHub extends DurableObject {
@@ -227,12 +237,10 @@ export class GameHub extends DurableObject {
   }
 
   getPlayer() {
-    return this.ctx.storage.sql
-      .exec(
-        `SELECT player_id,name,username,photo_url,state_json,created_at,updated_at
-         FROM player LIMIT 1`
-      )
-      .one();
+    return this.ctx.storage.sql.exec(
+      `SELECT player_id,name,username,photo_url,state_json,created_at,updated_at
+       FROM player LIMIT 1`
+    ).one();
   }
 
   savePlayer(player) {
@@ -260,32 +268,17 @@ export class GameHub extends DurableObject {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
-      return json({
-        ok: true,
-        service: "Territory Sdolars Server",
-        version: "1.0.0"
-      });
+      return json({ ok: true, service: "Territory Sdolars Server", version: "1.0.0" });
     }
 
-    if (request.method !== "POST") {
-      return json({ ok: false, error: "Method not allowed" }, 405);
-    }
+    if (request.method !== "POST") return json({ ok: false, error: "Method not allowed" }, 405);
 
     let body;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ ok: false, error: "Invalid JSON" }, 400);
-    }
+    try { body = await request.json(); }
+    catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
 
-    const auth = await validateTelegramInitData(
-      body.initData,
-      this.env.TELEGRAM_BOT_TOKEN
-    );
-
-    if (!auth.ok) {
-      return json({ ok: false, error: auth.error }, 401);
-    }
+    const auth = await validateTelegramInitData(body.initData, this.env.TELEGRAM_BOT_TOKEN);
+    if (!auth.ok) return json({ ok: false, error: auth.error }, 401);
 
     const user = auth.user;
     const playerId = String(user.id);
@@ -296,7 +289,6 @@ export class GameHub extends DurableObject {
 
       if (!existing) {
         const state = cloneDefaultState();
-
         this.savePlayer({
           playerId,
           name: displayName(user),
@@ -310,12 +302,7 @@ export class GameHub extends DurableObject {
         return json({
           ok: true,
           created: true,
-          user: {
-            id: playerId,
-            name: displayName(user),
-            username: user.username || null,
-            photoUrl: user.photo_url || null
-          },
+          user: { id: playerId, name: displayName(user), username: user.username || null, photoUrl: user.photo_url || null },
           state
         });
       }
@@ -323,12 +310,7 @@ export class GameHub extends DurableObject {
       return json({
         ok: true,
         created: false,
-        user: {
-          id: playerId,
-          name: displayName(user),
-          username: user.username || null,
-          photoUrl: user.photo_url || null
-        },
+        user: { id: playerId, name: displayName(user), username: user.username || null, photoUrl: user.photo_url || null },
         state: JSON.parse(existing.state_json)
       });
     }
@@ -337,14 +319,11 @@ export class GameHub extends DurableObject {
       const state = normalizeState(body.state);
       const stateJson = JSON.stringify(state);
 
-      if (
-        new TextEncoder().encode(stateJson).byteLength > MAX_STATE_BYTES
-      ) {
+      if (new TextEncoder().encode(stateJson).byteLength > MAX_STATE_BYTES) {
         return json({ ok: false, error: "State is too large" }, 413);
       }
 
       const existing = this.getPlayer();
-
       this.savePlayer({
         playerId,
         name: displayName(user),
@@ -355,11 +334,7 @@ export class GameHub extends DurableObject {
         updatedAt: now
       });
 
-      return json({
-        ok: true,
-        savedAt: now,
-        state
-      });
+      return json({ ok: true, savedAt: now, state });
     }
 
     return json({ ok: false, error: "Not found" }, 404);
@@ -391,26 +366,58 @@ export default {
       });
     }
 
-    if (url.pathname === "/api/auth" || url.pathname === "/api/save") {
-      if (request.method !== "POST") {
-        return json({ ok: false, error: "Method not allowed" }, 405);
+    if (url.pathname === "/telegram/webhook") {
+      if (request.method !== "POST") return json({ ok: false, error: "Method not allowed" }, 405);
+
+      let update;
+      try { update = await request.json(); }
+      catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+
+      try {
+        await handleTelegramUpdate(update, env);
+      } catch (error) {
+        console.error("Telegram webhook error", error);
       }
 
+      return json({ ok: true });
+    }
+
+    if (url.pathname === "/api/setup-telegram-webhook") {
+      if (request.method !== "GET") return json({ ok: false, error: "Method not allowed" }, 405);
+      if (!env.TELEGRAM_BOT_TOKEN) return json({ ok: false, error: "Telegram token is not configured" }, 500);
+
+      const webhookUrl = `${url.origin}/telegram/webhook`;
+      const result = await telegramApi("setWebhook", {
+        url: webhookUrl,
+        allowed_updates: ["message"]
+      }, env.TELEGRAM_BOT_TOKEN);
+
+      return json({
+        ok: Boolean(result?.ok),
+        webhookUrl,
+        telegram: result
+      }, result?.ok ? 200 : 502);
+    }
+
+    if (url.pathname === "/api/telegram-webhook-info") {
+      if (!env.TELEGRAM_BOT_TOKEN) return json({ ok: false, error: "Telegram token is not configured" }, 500);
+      const result = await telegramApi("getWebhookInfo", {}, env.TELEGRAM_BOT_TOKEN);
+      return json(result, result?.ok ? 200 : 502);
+    }
+
+    if (url.pathname === "/api/auth" || url.pathname === "/api/save") {
+      if (request.method !== "POST") return json({ ok: false, error: "Method not allowed" }, 405);
+
       let body;
-      try {
-        body = await request.clone().json();
-      } catch {
-        return json({ ok: false, error: "Invalid JSON" }, 400);
-      }
+      try { body = await request.clone().json(); }
+      catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
 
       let user;
       try {
         const params = new URLSearchParams(body.initData || "");
         const raw = params.get("user");
         user = raw ? JSON.parse(raw) : null;
-      } catch {
-        user = null;
-      }
+      } catch { user = null; }
 
       if (!user || !Number.isSafeInteger(user.id)) {
         return json({ ok: false, error: "Telegram user is missing" }, 401);
