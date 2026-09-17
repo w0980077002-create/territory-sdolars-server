@@ -1,0 +1,11 @@
+name = "territory-sdolars-server"
+main = "worker.js"
+compatibility_date = "2026-09-17"
+
+[[durable_objects.bindings]]
+name = "GAME_HUB"
+class_name = "GameHub"
+
+[exports.GameHub]
+type = "durable-object"
+storage = "sqlite"
