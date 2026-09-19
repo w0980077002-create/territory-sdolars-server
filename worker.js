@@ -538,7 +538,7 @@ export class TerritoryDB {
     const gold=[1000,700,500],result=[];
     for(let i=0;i<top.length;i++){
       const id=top[i].telegram_id,goldReward=gold[i];
-      this.sql.exec(`UPDATE players SET coins=coins+?,updated_at=? WHERE telegram_id=?`,g,now(),id);
+      this.sql.exec(`UPDATE players SET coins=coins+?,updated_at=? WHERE telegram_id=?`,goldReward,now(),id);
       this.sql.exec(`INSERT INTO tournament_awards(day,telegram_id,place,gold) VALUES(?,?,?,?)`,
         d,id,i+1,goldReward);
       this.addMail(id,{sender:"Territory Tournament",subject:`Турнир — место #${i+1}`,
