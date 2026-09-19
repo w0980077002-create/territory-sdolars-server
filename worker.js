@@ -1,3 +1,5 @@
+import { DurableObject } from "cloudflare:workers";
+
 /**
  * Territory G90 — Cloudflare Worker + Durable Object SQLite backend
  *
