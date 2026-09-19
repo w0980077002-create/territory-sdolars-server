@@ -751,18 +751,18 @@ export default {
 
     try{
       if(u.pathname==="/admin/health" && request.method==="GET"){
-        return json({ok:true,service:"admin",version:"G97"},200,{"cache-control":"no-store","x-territory-build":"G97"});
+        return json({ok:true,service:"admin",version:"G98"},200,{"cache-control":"no-store","x-territory-build":"G98"});
       }
       // Admin login is deliberately handled before the Durable Object lookup.
       // This keeps the login page independent from the game database and makes
       // the native HTML form work even when browser JavaScript is unavailable.
       if(u.pathname==="/admin/app.js" && request.method==="GET"){
-        return new Response(ADMIN_APP_JS,{status:200,headers:{"content-type":"text/javascript; charset=utf-8","cache-control":"no-store","x-territory-build":"G97"}});
+        return new Response(ADMIN_APP_JS,{status:200,headers:{"content-type":"text/javascript; charset=utf-8","cache-control":"no-store","x-territory-build":"G98"}});
       }
 
       if(u.pathname==="/admin" && request.method==="GET"){
         const auth=await verifyAdminToken(cookies(request)[ADMIN_COOKIE],env);
-        return new Response(adminHTML(auth),{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store","x-territory-build":"G97"}});
+        return new Response(adminHTML(auth),{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store","x-territory-build":"G98"}});
       }
 
       if(u.pathname==="/admin/login" && request.method==="POST"){
@@ -782,13 +782,14 @@ export default {
       }
 
       if(u.pathname==="/admin/db-health" && request.method==="GET"){
-        const auth=await verifyAdminToken(cookies(request)[ADMIN_COOKIE],env);
-        if(!auth || !adminCan(auth,"players")) return json({error:"Unauthorized"},401);
+        // Temporary diagnostic endpoint: intentionally public so the browser can
+        // show the exact SQLite/DO initialization error without an admin cookie.
         try{
           const stub=env.DB.get(env.DB.idFromName("global"));
-          return await dbJSON(stub,"/db/health");
+          const result=await dbJSON(stub,"/db/health");
+          return json({ok:true,diagnostic:"db-health",...result},200,{"cache-control":"no-store","x-territory-build":"G98"});
         }catch(e){
-          return json({ok:false,error:e?.message||String(e),stack:e?.stack||""},500,{"cache-control":"no-store","x-territory-build":"G97"});
+          return json({ok:false,diagnostic:"db-health",error:e?.message||String(e),stack:e?.stack||""},500,{"cache-control":"no-store","x-territory-build":"G98"});
         }
       }
 
