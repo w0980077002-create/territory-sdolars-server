@@ -706,6 +706,22 @@ export class TerritoryDB extends DurableObject {
   async fetch(request){
     const u=new URL(request.url);
     try{
+      if(u.pathname==="/db/test-admin-query"){
+        try {
+          this.init();
+          const q = "%";
+          const lim = 50, off = 0;
+          const sql = `SELECT telegram_id AS id,username,first_name,last_name,level,coins,gems,banned,ban_reason,updated_at,created_at FROM players WHERE username LIKE ? OR first_name LIKE ? OR telegram_id LIKE ? ORDER BY updated_at DESC LIMIT ? OFFSET ?`;
+          const rows = this.sql.exec(sql,q,q,q,lim,off).toArray();
+          let safeRows = [];
+          try { safeRows = JSON.parse(JSON.stringify(rows, (k,v)=>typeof v === "bigint" ? Number(v) : v)); } catch(e) {}
+          const totalRow = this.sql.exec(`SELECT COUNT(*) total FROM players WHERE username LIKE ? OR first_name LIKE ? OR telegram_id LIKE ?`,q,q,q).toArray()[0] || {};
+          const total = Number(totalRow.total ?? 0);
+          return json({ok:true,diagnostic:"admin-query",rows_count:rows.length,total,rows:safeRows});
+        } catch(e) {
+          return json({ok:false,diagnostic:"admin-query",error:String(e?.message||e),stack:String(e?.stack||"")},500);
+        }
+      }
       if(u.pathname==="/db/test-simple"){
         try {
           this.init();
@@ -773,18 +789,18 @@ export default {
 
     try{
       if(u.pathname==="/admin/health" && request.method==="GET"){
-        return json({ok:true,service:"admin",version:"G100"},200,{"cache-control":"no-store","x-territory-build":"G100"});
+        return json({ok:true,service:"admin",version:"G101"},200,{"cache-control":"no-store","x-territory-build":"G101"});
       }
       // Admin login is deliberately handled before the Durable Object lookup.
       // This keeps the login page independent from the game database and makes
       // the native HTML form work even when browser JavaScript is unavailable.
       if(u.pathname==="/admin/app.js" && request.method==="GET"){
-        return new Response(ADMIN_APP_JS,{status:200,headers:{"content-type":"text/javascript; charset=utf-8","cache-control":"no-store","x-territory-build":"G100"}});
+        return new Response(ADMIN_APP_JS,{status:200,headers:{"content-type":"text/javascript; charset=utf-8","cache-control":"no-store","x-territory-build":"G101"}});
       }
 
       if(u.pathname==="/admin" && request.method==="GET"){
         const auth=await verifyAdminToken(cookies(request)[ADMIN_COOKIE],env);
-        return new Response(adminHTML(auth),{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store","x-territory-build":"G100"}});
+        return new Response(adminHTML(auth),{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store","x-territory-build":"G101"}});
       }
 
       if(u.pathname==="/admin/login" && request.method==="POST"){
@@ -803,14 +819,25 @@ export default {
         return json({ok:true,role,label:ADMIN_ROLE_LABELS[role],login:cfg.login,permissions:ADMIN_ROLE_PERMS[role]},200,{"set-cookie":cookie});
       }
 
+      if(u.pathname==="/admin/db-test-admin-query" && request.method==="GET"){
+        try{
+          const stub=env.DB.get(env.DB.idFromName("global"));
+          const r=await dbCall(stub,"/db/test-admin-query");
+          const text=await r.text();
+          return new Response(text,{status:r.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-territory-build":"G101"}});
+        }catch(e){
+          return json({ok:false,error:String(e?.message||e),stage:"worker-call"},500,{"cache-control":"no-store","x-territory-build":"G101"});
+        }
+      }
+
       if(u.pathname==="/admin/db-test-simple" && request.method==="GET"){
         try{
           const stub=env.DB.get(env.DB.idFromName("global"));
           const r=await dbCall(stub,"/db/test-simple");
           const text=await r.text();
-          return new Response(text,{status:r.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-territory-build":"G100"}});
+          return new Response(text,{status:r.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-territory-build":"G101"}});
         }catch(e){
-          return json({ok:false,error:String(e?.message||e),stage:"worker-call"},500,{"cache-control":"no-store","x-territory-build":"G100"});
+          return json({ok:false,error:String(e?.message||e),stage:"worker-call"},500,{"cache-control":"no-store","x-territory-build":"G101"});
         }
       }
 
@@ -820,9 +847,9 @@ export default {
         try{
           const stub=env.DB.get(env.DB.idFromName("global"));
           const result=await dbJSON(stub,"/db/health");
-          return json({ok:true,diagnostic:"db-health",...result},200,{"cache-control":"no-store","x-territory-build":"G100"});
+          return json({ok:true,diagnostic:"db-health",...result},200,{"cache-control":"no-store","x-territory-build":"G101"});
         }catch(e){
-          return json({ok:false,diagnostic:"db-health",error:e?.message||String(e),stack:e?.stack||""},500,{"cache-control":"no-store","x-territory-build":"G100"});
+          return json({ok:false,diagnostic:"db-health",error:e?.message||String(e),stack:e?.stack||""},500,{"cache-control":"no-store","x-territory-build":"G101"});
         }
       }
 
