@@ -537,13 +537,13 @@ export class TerritoryDB {
       ORDER BY score DESC,telegram_id ASC LIMIT 3`,d).toArray();
     const gold=[1000,700,500],result=[];
     for(let i=0;i<top.length;i++){
-      const id=top[i].telegram_id,g=gold[i];
+      const id=top[i].telegram_id,goldReward=gold[i];
       this.sql.exec(`UPDATE players SET coins=coins+?,updated_at=? WHERE telegram_id=?`,g,now(),id);
       this.sql.exec(`INSERT INTO tournament_awards(day,telegram_id,place,gold) VALUES(?,?,?,?)`,
-        d,id,i+1,g);
+        d,id,i+1,goldReward);
       this.addMail(id,{sender:"Territory Tournament",subject:`Турнир — место #${i+1}`,
-        body:`Награда за дневной турнир: ${g} золота.`,coins:g});
-      result.push({id,place:i+1,gold:g});
+        body:`Награда за дневной турнир: ${goldReward} золота.`,coins:goldReward});
+      result.push({id,place:i+1,gold:goldReward});
     }
     return {day:d,already:false,result};
   }
@@ -757,6 +757,9 @@ export default {
     const u=new URL(request.url);
 
     try{
+      if(u.pathname==="/admin/health" && request.method==="GET"){
+        return json({ok:true,service:"admin",version:"G91.5"});
+      }
       // Admin login is deliberately handled before the Durable Object lookup.
       // This keeps the login page independent from the game database and makes
       // the native HTML form work even when browser JavaScript is unavailable.
@@ -875,8 +878,6 @@ export default {
       }
       const p=await playerFromTelegram(request,env,stub);
       const id=p.telegram_id;
-
-      if(u.pathname==="/admin/health") return json({ok:true,service:"admin",version:"G91.4"});
 
       if(u.pathname==="/api/auth") return json({
         ok:true,player:{
