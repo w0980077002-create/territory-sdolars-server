@@ -236,11 +236,11 @@ return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="v
 <div class="card"><h3>👑 Владелец</h3><p class="muted">Полный доступ. Используется текущий секрет ADMIN_PASSWORD.</p>
 <input id="ownerLogin" value="owner" placeholder="Логин владельца"><br><br>
 <input id="ownerPw" type="password" placeholder="Пароль владельца"><br><br>
-<button onclick="login('owner')">Войти как владелец</button></div>
+<button type="button" onclick="window.adminLogin('owner')">Войти как владелец</button></div>
 <div class="card"><h3>🛡️ Модератор</h3><p class="muted">Роль подготовлена, но пароль в Cloudflare пока не настроен.</p>
 <input id="modLogin" placeholder="Логин модератора"><br><br>
 <input id="modPw" type="password" placeholder="Пароль модератора"><br><br>
-<button onclick="login('moderator')">Войти как модератор</button></div>
+<button type="button" onclick="window.adminLogin('moderator')">Войти как модератор</button></div>
 </div><span id="msg" class="dangerText"></span></div>
 <div id="app" style="display:none"><div class="tabs">
 <button data-perm="players" onclick="tab('players')">Игроки</button>
@@ -256,7 +256,7 @@ return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="v
 <script>
 const $=x=>document.getElementById(x);const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(u,o={}){let r=await fetch(u,{...o,headers:{'content-type':'application/json',...(o.headers||{})}});let d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||r.statusText);return d}
-async function login(role){
+window.adminLogin=async function(role){
   try{
     const loginValue=role==='owner'?$('ownerLogin').value.trim():$('modLogin').value.trim();
     const password=role==='owner'?$('ownerPw').value:$('modPw').value;
