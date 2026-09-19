@@ -236,9 +236,9 @@ async function playerFromTelegram(request, env, stub) {
 
 function adminHTML(auth=null) {
 const authed = !!auth;
-return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Territory Admin G91.8</title>
+return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Territory Admin G91.9</title>
 <style>body{margin:0;background:#0a1016;color:#edf4f7;font-family:system-ui,-apple-system,sans-serif}header{padding:15px;background:#111b24;position:sticky;top:0;z-index:3;border-bottom:1px solid #263642}main{max-width:1180px;margin:auto;padding:14px}.tabs{display:flex;gap:7px;overflow:auto;margin-bottom:12px}button,input,select,textarea{font:inherit}button{padding:9px 12px;border:1px solid #3b4d59;border-radius:9px;background:#182630;color:#fff;cursor:pointer}button:hover{background:#243640}.danger{background:#632522}.good{background:#24502e}.muted{color:#91a2ab;font-size:12px}.panel{display:none}.panel.active{display:block}.card{background:#111b23;border:1px solid #273742;border-radius:12px;padding:13px;margin:9px 0}.row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:9px}input,select,textarea{box-sizing:border-box;width:100%;padding:9px;background:#0d151c;border:1px solid #394b56;border-radius:8px;color:#fff}table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid #26343d;text-align:left;font-size:13px;vertical-align:top}.click{cursor:pointer}.click:hover{background:#17242c}.pill{display:inline-block;padding:3px 7px;border-radius:999px;background:#24343e;font-size:11px}.modal{position:fixed;inset:0;background:#000b;display:none;align-items:flex-start;justify-content:center;padding:20px;overflow:auto;z-index:10}.modal.show{display:flex}.modalbox{width:min(1050px,100%);background:#101a22;border:1px solid #334752;border-radius:14px;padding:14px}.actions button{margin:3px}.history{max-height:380px;overflow:auto}.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px}.kv div{background:#0c141a;padding:8px;border-radius:8px}.small{font-size:12px}.dangerText{color:#ff8f86}</style></head><body>
-<header><b>⚔️ Territory · G91.8 Admin</b><span id="status" class="muted">${authed ? ` · ${auth.label}: ${auth.login}` : ""}</span></header><main>
+<header><b>⚔️ Territory · G91.9 Admin</b><span id="status" class="muted">${authed ? ` · ${auth.label}: ${auth.login}` : ""}</span></header><main>
 <div id="login" class="card" style="display:${authed ? "none" : "block"}"><h2>Вход в панель</h2><div class="grid">
 <div class="card"><h3>👑 Владелец</h3><p class="muted">Полный доступ. Используется текущий секрет ADMIN_PASSWORD.</p>
 <form method="POST" action="/admin/login">
@@ -277,7 +277,13 @@ window.adminLogin=async function(role,event){
     loadPlayers();
   }catch(e){$('msg').textContent=' '+e.message}
 }
-function tab(id){document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));$(id).classList.add('active');({players:loadPlayers,finance,prices,anti,logs,broadcast}[id])()}
+function tab(id){
+  document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
+  $(id).classList.add('active');
+  const loaders={players:loadPlayers,finance:loadFinance,prices:loadPrices,anti:loadAnti,logs:loadLogs,broadcast:loadBroadcast};
+  const fn=loaders[id];
+  if(typeof fn==='function') fn();
+}
 function openById(){const id=$('q').value.trim();if(id)openPlayer(id)}
 async function loadPlayers(offset=0){try{const d=await api('/admin/api/players?q='+encodeURIComponent($('q').value)+'&offset='+offset);let h='<div class="card"><span class="muted">Найдено: '+d.total+'</span></div><div class="card"><table><tr><th>Telegram ID</th><th>Игрок</th><th>Ур.</th><th>Монеты</th><th>Кристаллы</th><th>Статус</th><th></th></tr>';for(const p of d.rows){h+='<tr class="click" onclick="openPlayer(\''+esc(p.id)+'\')"><td>'+esc(p.id)+'</td><td>'+esc(p.first_name||p.username||'')+'<br><span class="muted">@'+esc(p.username)+'</span></td><td>'+p.level+'</td><td>'+p.coins+'</td><td>'+p.gems+'</td><td>'+(p.banned?'<span class="pill dangerText">BAN</span>':'<span class="pill">OK</span>')+'</td><td><button onclick="event.stopPropagation();openPlayer(\''+esc(p.id)+'\')">Открыть</button></td></tr>'}h+='</table></div>';h+='<div class="row">';if(d.offset>0)h+='<button onclick="loadPlayers('+Math.max(0,d.offset-d.limit)+')">← Назад</button>';if(d.offset+d.limit<d.total)h+='<button onclick="loadPlayers('+(d.offset+d.limit)+')">Далее →</button>';h+='</div>';$('pb').innerHTML=h}catch(e){$('pb').innerHTML='<div class="card dangerText">'+esc(e.message)+'</div>'}}
 async function openPlayer(id){try{const d=await api('/admin/api/player/'+encodeURIComponent(id));if(!d){alert('Игрок не найден');return}$('mt').textContent='Игрок '+id;renderPlayer(d);$('modal').classList.add('show')}catch(e){alert(e.message)}}
@@ -291,7 +297,7 @@ async function adjust(action){const amount=prompt(action==='level'?'Новый �
 async function giftPlayer(){const id=$('mt').textContent.replace('Игрок ','').trim();const coins=prompt('Монеты','0');if(coins===null)return;const gems=prompt('Кристаллы','0');if(gems===null)return;const weapon_id=prompt('ID оружия (необязательно)','')||'';const reason=prompt('Причина','Подарок от администрации');if(!reason)return;await api('/admin/api/gift',{method:'POST',body:JSON.stringify({id,coins,gems,weapon_id,reason,subject:'Подарок от администрации',body:reason})});alert('Письмо отправлено');openPlayer(id)}
 async function toggleBan(b){const id=$('mt').textContent.replace('Игрок ','').trim();const reason=prompt('Причина',b?'Нарушение правил':'Снятие блокировки');if(!reason)return;await api('/admin/api/ban',{method:'POST',body:JSON.stringify({id,banned:b,reason})});openPlayer(id);loadPlayers()}
 function closeModal(){$('modal').classList.remove('show')}
-function broadcast(){
+function loadBroadcast(){
   $('bcAudience').onchange=()=>{ $('bcLevelBox').style.display=$('bcAudience').value==='level'?'block':'none'; };
   loadBroadcastHistory();
 }
@@ -306,11 +312,16 @@ async function sendBroadcast(){
   try{const d=await api('/admin/api/broadcast',{method:'POST',body:JSON.stringify({audience,min_level:minLevel,coins,gems,weapon_id,subject,body,reason})});$('bcResult').textContent='Готово: отправлено '+d.sent+' игрокам. ID рассылки: '+d.broadcast_id;loadBroadcastHistory()}catch(e){alert(e.message)}
 }
 async function loadBroadcastHistory(){try{const d=await api('/admin/api/broadcasts');$('bchistory').innerHTML='<div class="card"><h3>История массовых рассылок</h3><table><tr><th>Дата</th><th>Название</th><th>Получателей</th><th>Награда</th><th>Причина</th></tr>'+d.map(x=>'<tr><td>'+new Date(x.created_at*1000).toLocaleString()+'</td><td>'+esc(x.subject)+'</td><td>'+x.recipient_count+'</td><td>🪙 '+x.coins+' 💎 '+x.gems+(x.weapon_id?' 🎁 '+esc(x.weapon_id):'')+'</td><td>'+esc(x.reason)+'</td></tr>').join('')+'</table></div>'}catch(e){$('bchistory').innerHTML='<div class="card dangerText">'+esc(e.message)+'</div>'}}
-async function finance(){const d=await api('/admin/api/finance');$('fb').innerHTML='<div class="grid"><div class="card">Доход за 24ч: <b>'+d.dailyIncome+'</b></div><div class="card">Подтверждённые платежи: <b>'+d.paymentCount+'</b></div></div><div class="card"><h3>Топ донатеров</h3><table><tr><th>ID</th><th>Сумма</th><th>Платежей</th></tr>'+d.topDonors.map(x=>'<tr><td>'+esc(x.id)+'</td><td>'+x.total+'</td><td>'+x.payments+'</td></tr>').join('')+'</table></div>'}
-async function prices(){const d=await api('/admin/api/prices');$('prb').innerHTML='<div class="card"><table><tr><th>Оружие</th><th>Цена</th><th>Урон</th><th></th></tr>'+d.map(x=>'<tr><td>'+esc(x.icon)+' '+esc(x.name)+'</td><td><input id="p_'+esc(x.item_id)+'" value="'+x.price+'"></td><td>'+x.damage+'</td><td><button onclick="price(\''+esc(x.item_id)+'\')">Сохранить</button></td></tr>').join('')+'</table></div>'}
-async function price(id){const reason=prompt('Причина изменения цены','Коррекция магазина');if(!reason)return;await api('/admin/api/price',{method:'POST',body:JSON.stringify({item_id:id,price:$('p_'+id).value,reason})});prices()}
-async function anti(){const d=await api('/admin/api/anticheat');$('ab').innerHTML='<div class="card"><table><tr><th>ID</th><th>Игрок</th><th>Нарушения</th><th>Последнее</th><th>Статус</th></tr>'+d.map(x=>'<tr><td>'+esc(x.id)+'</td><td>'+esc(x.first_name||x.username||'')+'</td><td>'+x.strikes+'</td><td>'+x.last_action_ms+'</td><td>'+(x.banned?'BAN':'OK')+'</td></tr>').join('')+'</table></div>'}
-async function logs(){const d=await api('/admin/api/logs');$('lb').innerHTML='<div class="card"><table><tr><th>Время</th><th>Игрок</th><th>Действие</th><th>Причина</th></tr>'+d.map(x=>'<tr><td>'+new Date(x.created_at*1000).toLocaleString()+'</td><td>'+esc(x.telegram_id)+'</td><td>'+esc(x.action)+'</td><td>'+esc(x.reason)+'</td></tr>').join('')+'</table></div>'}
+async function loadFinance(){const d=await api('/admin/api/finance');$('fb').innerHTML='<div class="grid"><div class="card">Доход за 24ч: <b>'+d.dailyIncome+'</b></div><div class="card">Подтверждённые платежи: <b>'+d.paymentCount+'</b></div></div><div class="card"><h3>Топ донатеров</h3><table><tr><th>ID</th><th>Сумма</th><th>Платежей</th></tr>'+d.topDonors.map(x=>'<tr><td>'+esc(x.id)+'</td><td>'+x.total+'</td><td>'+x.payments+'</td></tr>').join('')+'</table></div>'}
+async function loadPrices(){const d=await api('/admin/api/prices');$('prb').innerHTML='<div class="card"><table><tr><th>Оружие</th><th>Цена</th><th>Урон</th><th></th></tr>'+d.map(x=>'<tr><td>'+esc(x.icon)+' '+esc(x.name)+'</td><td><input id="p_'+esc(x.item_id)+'" value="'+x.price+'"></td><td>'+x.damage+'</td><td><button onclick="price(\''+esc(x.item_id)+'\')">Сохранить</button></td></tr>').join('')+'</table></div>'}
+async function price(id){const reason=prompt('Причина изменения цены','Коррекция магазина');if(!reason)return;await api('/admin/api/price',{method:'POST',body:JSON.stringify({item_id:id,price:$('p_'+id).value,reason})});loadPrices()}
+async function loadAnti(){const d=await api('/admin/api/anticheat');$('ab').innerHTML='<div class="card"><table><tr><th>ID</th><th>Игрок</th><th>Нарушения</th><th>Последнее</th><th>Статус</th></tr>'+d.map(x=>'<tr><td>'+esc(x.id)+'</td><td>'+esc(x.first_name||x.username||'')+'</td><td>'+x.strikes+'</td><td>'+x.last_action_ms+'</td><td>'+(x.banned?'BAN':'OK')+'</td></tr>').join('')+'</table></div>'}
+async function loadLogs(){const d=await api('/admin/api/logs');$('lb').innerHTML='<div class="card"><table><tr><th>Время</th><th>Игрок</th><th>Действие</th><th>Причина</th></tr>'+d.map(x=>'<tr><td>'+new Date(x.created_at*1000).toLocaleString()+'</td><td>'+esc(x.telegram_id)+'</td><td>'+esc(x.action)+'</td><td>'+esc(x.reason)+'</td></tr>').join('')+'</table></div>'}
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded',()=>{if($('app')?.style.display!=='none') loadPlayers();});
+}else{
+  if($('app')?.style.display!=='none') loadPlayers();
+}
 </script></body></html>`}
 
 
@@ -758,14 +769,14 @@ export default {
 
     try{
       if(u.pathname==="/admin/health" && request.method==="GET"){
-        return json({ok:true,service:"admin",version:"G91.8"},200,{"cache-control":"no-store","x-territory-build":"G91.8"});
+        return json({ok:true,service:"admin",version:"G91.9"},200,{"cache-control":"no-store","x-territory-build":"G91.9"});
       }
       // Admin login is deliberately handled before the Durable Object lookup.
       // This keeps the login page independent from the game database and makes
       // the native HTML form work even when browser JavaScript is unavailable.
       if(u.pathname==="/admin" && request.method==="GET"){
         const auth=await verifyAdminToken(cookies(request)[ADMIN_COOKIE],env);
-        return new Response(adminHTML(auth),{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store","x-territory-build":"G91.8"}});
+        return new Response(adminHTML(auth),{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store","x-territory-build":"G91.9"}});
       }
 
       if(u.pathname==="/admin/login" && request.method==="POST"){
