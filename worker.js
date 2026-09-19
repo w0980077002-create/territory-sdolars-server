@@ -1,40 +1,743 @@
-import { DurableObject } from "cloudflare:workers";
+/**
+ * Territory G90 — Cloudflare Worker + Durable Object SQLite backend
+ *
+ * Required:
+ *   BOT_TOKEN       Telegram bot token (Worker secret)
+ *   ADMIN_PASSWORD  admin password (Worker secret)
+ *
+ * Durable Object binding:
+ *   DB -> TerritoryDB
+ *
+ * Cron:
+ *   0 3 * * *   (03:00 UTC; Cloudflare Cron is UTC)
+ *
+ * Set the requested admin password securely with:
+ *   wrangler secret put ADMIN_PASSWORD
+ * and enter: MySecretPassword123
+ *
+ * The source deliberately does not hard-code the admin password.
+ */
 
-const MAX_AUTH_AGE_SECONDS=24*60*60, MAX_STATE_BYTES=64*1024, BOT_USERNAME="TeritoryGameBot";
-const DEFAULT_STATE={coins:1000,gems:25,energy:200,combatStone:0,hp:120,maxHp:120,level:1,exp:0,maxExp:100,weapon:"Кулаки",bonusDamage:0,strength:5,agility:5,defense:0,freePoints:0,inventory:["🪓"],alexQuest:0,cityRep:0,wins:0,losses:0,battles:0};
-function json(data,status=200){return new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json; charset=UTF-8","cache-control":"no-store","access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"Content-Type"})}
-function hex(b){return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("")}
-function timingSafeEqual(a,b){if(a.length!==b.length)return false;let d=0;for(let i=0;i<a.length;i++)d|=a.charCodeAt(i)^b.charCodeAt(i);return d===0}
-async function hmacHex(keyBytes,message){const k=await crypto.subtle.importKey("raw",keyBytes,{name:"HMAC",hash:"SHA-256"},false,["sign"]);return hex(await crypto.subtle.sign("HMAC",k,new TextEncoder().encode(message)))}
-async function validateTelegramInitData(initData,botToken){if(!botToken||typeof initData!=="string"||!initData)return{ok:false,error:"Telegram auth is not configured"};let p;try{p=new URLSearchParams(initData)}catch{return{ok:false,error:"Invalid initData"}}const hash=p.get("hash"),authDate=Number(p.get("auth_date"));if(!hash)return{ok:false,error:"Missing Telegram hash"};if(!Number.isFinite(authDate))return{ok:false,error:"Missing auth_date"};const age=Math.floor(Date.now()/1000)-authDate;if(age<-60||age>MAX_AUTH_AGE_SECONDS)return{ok:false,error:"Telegram auth data is expired"};const dcs=[...p.entries()].filter(([k])=>k!=="hash").sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>`${k}=${v}`).join("\n");const tk=await crypto.subtle.importKey("raw",new TextEncoder().encode(botToken),{name:"HMAC",hash:"SHA-256"},false,["sign"]);const sk=await crypto.subtle.sign("HMAC",tk,new TextEncoder().encode("WebAppData"));const calc=await hmacHex(new Uint8Array(sk),dcs);if(!timingSafeEqual(calc,hash.toLowerCase()))return{ok:false,error:"Invalid Telegram signature"};let user;try{user=JSON.parse(p.get("user")||"null")}catch{return{ok:false,error:"Invalid Telegram user data"}}if(!user||!Number.isSafeInteger(user.id))return{ok:false,error:"Telegram user is missing"};return{ok:true,user}}
-function displayName(u){return [u.first_name,u.last_name].filter(Boolean).join(" ").trim()||(u.username?`@${u.username}`:"Territory")}
-function cloneDefaultState(){return JSON.parse(JSON.stringify(DEFAULT_STATE))}
-function normalizeState(input){const s=cloneDefaultState();if(!input||typeof input!=="object")return s;const nums=["coins","gems","energy","combatStone","hp","maxHp","level","exp","maxExp","bonusDamage","strength","agility","defense","freePoints","alexQuest","cityRep","merchantRep","marketDay","wins","losses","battles","gameDice","gameRolls","gameSteps","gameEventVersion","gameTaskProgress","gameEndsAt","gameSaveVersion"];for(const k of nums)if(Number.isFinite(Number(input[k])))s[k]=Number(input[k]);if(typeof input.weapon==="string"&&input.weapon.length<=80)s.weapon=input.weapon;if(Array.isArray(input.inventory))s.inventory=input.inventory.filter(x=>typeof x==="string").slice(0,200);for(const k of ["gameMilestones","gameTaskClaims","gamePanelClaims","gameJackpotClaims"])if(Array.isArray(input[k]))s[k]=input[k].slice(0,500);if(typeof input.gameGiftDate==="string"&&input.gameGiftDate.length<=32)s.gameGiftDate=input.gameGiftDate;return s}
-async function telegramApi(method,body,token){const r=await fetch(`https://api.telegram.org/bot${token}/${method}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});try{return await r.json()}catch{return{ok:false,error:`Telegram API HTTP ${r.status}`}}}
-async function handleTelegramUpdate(update,env){const m=update?.message,t=typeof m?.text==="string"?m.text.trim():"",chatId=m?.chat?.id;if(chatId==null||!t)return;const c=t.split(/\s+/)[0].split("@")[0].toLowerCase();if(c!=="/start"&&c!=="/game")return;await telegramApi("sendMessage",{chat_id:chatId,text:"🏰 Territory — Sdolars\n\nДобро пожаловать! Открой игру и продолжай свой путь.",reply_markup:{inline_keyboard:[[{text:"🎮 ИГРАТЬ",url:`https://t.me/${BOT_USERNAME}?startapp`}]]}},env.TELEGRAM_BOT_TOKEN)}
-const ACTIONS=Object.freeze({DAILY_CLAIM:"daily_claim",SHOP_BUY:"shop_buy"}),MAX_ACTION_LOG=100,PROTECTED_FIELDS=["coins","gems","combatStone","inventory"];
-const SHOP=Object.freeze({axe:{price:250,currency:"coins",item:"🪓 Топор новичка"},sword:{price:600,currency:"coins",item:"⚔️ Меч Sdolars"},shield:{price:500,currency:"coins",item:"🛡️ Щит стража"}});
-export class GameHub extends DurableObject{constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;this.ctx.blockConcurrencyWhile(async()=>this.ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS player (player_id TEXT PRIMARY KEY,name TEXT NOT NULL,username TEXT,photo_url TEXT,state_json TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS action_log (action_id TEXT PRIMARY KEY,player_id TEXT NOT NULL,action TEXT NOT NULL,response_json TEXT NOT NULL,created_at INTEGER NOT NULL)`))}getPlayer(){return this.ctx.storage.sql.exec(`SELECT * FROM player LIMIT 1`).one()}savePlayer(p){this.ctx.storage.sql.exec(`INSERT OR REPLACE INTO player(player_id,name,username,photo_url,state_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`,p.playerId,p.name,p.username||null,p.photoUrl||null,JSON.stringify(p.state),p.createdAt,p.updatedAt)}getAction(id){if(!id)return null;try{const r=this.ctx.storage.sql.exec(`SELECT response_json FROM action_log WHERE action_id=? LIMIT 1`,String(id)).one();return r?JSON.parse(r.response_json):null}catch{return null}}saveAction(id,pid,a,res){if(!id)return;try{this.ctx.storage.sql.exec(`INSERT OR REPLACE INTO action_log(action_id,player_id,action,response_json,created_at) VALUES(?,?,?,?,?)`,String(id),String(pid),String(a),JSON.stringify(res),Date.now());this.ctx.storage.sql.exec(`DELETE FROM action_log WHERE rowid NOT IN (SELECT rowid FROM action_log ORDER BY created_at DESC LIMIT ?)`,MAX_ACTION_LOG)}catch{}}
-async action(action,body,user){const id=String(body?.actionId||"").slice(0,120),replay=this.getAction(id);if(replay)return replay;const existing=this.getPlayer(),state=existing?JSON.parse(existing.state_json):cloneDefaultState(),now=Date.now(),result=(ok,extra={})=>({ok,...extra});if(action===ACTIONS.DAILY_CLAIM){const day=new Date().toISOString().slice(0,10);if(state.serverDailyClaimDate===day)return result(false,{error:"Daily reward already claimed",state});const streak=Number(state.serverDailyStreak||0)+1,coins=100+Math.min(streak,7)*25;state.coins+=coins;state.combatStone+=5;state.serverDailyClaimDate=day;state.serverDailyStreak=streak;this.savePlayer({playerId:String(user.id),name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:existing?.created_at||now,updatedAt:now});const response=result(true,{action,coins,combatStone:5,streak,state,savedAt:now});this.saveAction(id,String(user.id),action,response);return response}if(action===ACTIONS.SHOP_BUY){const itemId=String(body?.itemId||""),item=SHOP[itemId];if(!item)return result(false,{error:"Unknown shop item",state});const balance=Number(state[item.currency]||0);if(balance<item.price)return result(false,{error:"Not enough currency",currency:item.currency,price:item.price,balance,state});state[item.currency]=balance-item.price;state.inventory=Array.isArray(state.inventory)?state.inventory.slice(0,199):[];state.inventory.push(item.item);this.savePlayer({playerId:String(user.id),name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:existing?.created_at||now,updatedAt:now});const response=result(true,{action,itemId,price:item.price,currency:item.currency,item:item.item,state,savedAt:now});this.saveAction(id,String(user.id),action,response);return response}return result(false,{error:"Unsupported action",state})}
-async fetch(request){const url=new URL(request.url);if(request.method==="GET"&&url.pathname==="/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.5.0",realtime:true,rooms:true,serverShop:true});if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);let body;try{body=await request.json()}catch{return json({ok:false,error:"Invalid JSON"},400)}const auth=await validateTelegramInitData(body.initData,this.env.TELEGRAM_BOT_TOKEN);if(!auth.ok)return json({ok:false,error:auth.error},401);const user=auth.user,pid=String(user.id),now=Date.now();if(url.pathname==="/auth"){const e=this.getPlayer();if(!e){const state=cloneDefaultState();this.savePlayer({playerId:pid,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:now,updatedAt:now});return json({ok:true,created:true,user:{id:pid,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null},state})}return json({ok:true,created:false,user:{id:pid,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null},state:JSON.parse(e.state_json)})}if(url.pathname==="/save"){const incoming=normalizeState(body.state),e=this.getPlayer(),old=e?JSON.parse(e.state_json):cloneDefaultState();for(const k of PROTECTED_FIELDS)if(Object.prototype.hasOwnProperty.call(old,k))incoming[k]=old[k];const sj=JSON.stringify(incoming);if(new TextEncoder().encode(sj).byteLength>MAX_STATE_BYTES)return json({ok:false,error:"State is too large"},413);this.savePlayer({playerId:pid,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state:incoming,createdAt:e?.created_at||now,updatedAt:now});return json({ok:true,savedAt:now,state:incoming})}if(url.pathname==="/action"){if(typeof body.actionId!=="string"||!body.actionId)return json({ok:false,error:"Missing actionId"},400);const a=typeof body.action==="string"?body.action:"";if(!ACTIONS[a.toUpperCase()]&&a!==ACTIONS.DAILY_CLAIM&&a!==ACTIONS.SHOP_BUY)return json({ok:false,error:"Unsupported action"},400);const out=await this.action(a,body,user);return json(out,out.ok?200:409)}if(url.pathname==="/shop")return json({ok:true,version:"G84",currency:"coins",items:Object.entries(SHOP).map(([id,item])=>({id,...item}))});return json({ok:false,error:"Not found"},404)}}
-function presenceSnapshot(hub){return hub.getWebSockets().map(ws=>ws.deserializeAttachment?.()).filter(x=>x?.authenticated).map(x=>({id:x.id,name:x.name,username:x.username||null,ready:!!x.ready,lastSeen:x.lastSeen}))}
-export class PresenceHub extends DurableObject{constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env}broadcast(p,except=null){const m=JSON.stringify(p);for(const ws of this.ctx.getWebSockets()){if(ws===except)continue;try{ws.send(m)}catch{}}}async fetch(request){if(request.method!=="GET"||request.headers.get("Upgrade")?.toLowerCase()!=="websocket")return json({ok:false,error:"WebSocket upgrade required"},426);const pair=new WebSocketPair(),client=pair[0],server=pair[1];this.ctx.acceptWebSocket(server);server.serializeAttachment({authenticated:false,id:null,name:null,username:null,ready:false,lastSeen:Date.now()});server.send(JSON.stringify({type:"hello",version:"G84",authRequired:true}));return new Response(null,{status:101,webSocket:client})}async authenticate(ws,initData){const a=await validateTelegramInitData(initData,this.env.TELEGRAM_BOT_TOKEN);if(!a.ok){ws.send(JSON.stringify({type:"auth_error",error:a.error}));ws.close(1008,"auth failed");return false}const u=a.user;ws.serializeAttachment({authenticated:true,id:String(u.id),name:displayName(u),username:u.username||null,ready:false,lastSeen:Date.now()});ws.send(JSON.stringify({type:"authenticated",player:{id:String(u.id),name:displayName(u),username:u.username||null},online:presenceSnapshot(this)}));this.broadcast({type:"presence",online:presenceSnapshot(this)},ws);return true}async webSocketMessage(ws,message){let d;try{d=JSON.parse(typeof message==="string"?message:new TextDecoder().decode(message))}catch{return}const m=ws.deserializeAttachment?.()||{};if(!m.authenticated){if(d.type==="auth"&&typeof d.initData==="string")await this.authenticate(ws,d.initData);else ws.send(JSON.stringify({type:"auth_required"}));return}m.lastSeen=Date.now();if(d.type==="ping"){ws.serializeAttachment(m);ws.send(JSON.stringify({type:"pong",at:m.lastSeen}));return}if(d.type==="ready"){m.ready=!!d.value;ws.serializeAttachment(m);this.broadcast({type:"presence",online:presenceSnapshot(this)});return}if(d.type==="party_invite"){const target=String(d.targetId||"");for(const peer of this.ctx.getWebSockets()){const p=peer.deserializeAttachment?.();if(p?.authenticated&&p.id===target)peer.send(JSON.stringify({type:"party_invite",from:{id:m.id,name:m.name},partyId:String(d.partyId||"")}))}return}if(d.type==="chat"){const text=typeof d.text==="string"?d.text.trim().slice(0,500):"";if(text)this.broadcast({type:"chat",from:{id:m.id,name:m.name},text,at:Date.now()})}}async webSocketClose(ws){const m=ws.deserializeAttachment?.();if(m?.authenticated)this.broadcast({type:"presence",online:presenceSnapshot(this)})}}
-const ZONES=["head","chest","stomach","waist","legs"],DEF_ZONES=["head","chest","stomach","waist"],MAX_ROOM=20;
-function roomPlayer(meta,team){return{id:meta.id,name:meta.name,level:Number(meta.level)||1,team:team||null,hp:120,maxHp:120,ready:false,connected:true,defeated:false}}
-function safeRoom(r){return{roomId:r.roomId,mode:r.mode,status:r.status,ownerId:r.ownerId,createdAt:r.createdAt,startsAt:r.startsAt,round:r.round,turn:r.turn,players:r.players.map(p=>({...p})),battle:r.battle?{phase:r.battle.phase,turn:r.battle.turn,round:r.battle.round,logs:r.battle.logs.slice(-40)}:null}}
-export class RoomHub extends DurableObject{constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;this.room=null;this.ctx.blockConcurrencyWhile(async()=>{const raw=await this.ctx.storage.get("room");if(raw)this.room=raw})}
-async persist(){if(this.room)await this.ctx.storage.put("room",this.room)}
-sockets(){return this.ctx.getWebSockets()}send(ws,p){try{ws.send(JSON.stringify(p))}catch{}}
-broadcast(p){for(const ws of this.sockets())this.send(ws,p)}
-async fetch(request){if(request.method!=="GET"||request.headers.get("Upgrade")?.toLowerCase()!=="websocket")return json({ok:false,error:"WebSocket upgrade required"},426);const pair=new WebSocketPair(),client=pair[0],server=pair[1];this.ctx.acceptWebSocket(server);server.serializeAttachment({authenticated:false,id:null,name:null,roomId:null});this.send(server,{type:"hello",version:"G84",roomRequired:true});return new Response(null,{status:101,webSocket:client})}
-async authenticate(ws,initData){const a=await validateTelegramInitData(initData,this.env.TELEGRAM_BOT_TOKEN);if(!a.ok){this.send(ws,{type:"room_error",error:a.error});ws.close(1008,"auth failed");return null}const u=a.user;const m={authenticated:true,id:String(u.id),name:displayName(u),username:u.username||null,level:1,roomId:null};ws.serializeAttachment(m);this.send(ws,{type:"room_authenticated",player:{id:m.id,name:m.name}});return m}
-async webSocketMessage(ws,message){let d;try{d=JSON.parse(typeof message==="string"?message:new TextDecoder().decode(message))}catch{return}let m=ws.deserializeAttachment?.()||{};if(!m.authenticated){if(d.type==="auth"&&typeof d.initData==="string"){m=await this.authenticate(ws,d.initData);if(!m)return}else{this.send(ws,{type:"auth_required"});return}}if(d.type==="ping"){this.send(ws,{type:"pong",at:Date.now()});return}if(d.type==="room_create"){await this.createRoom(ws,m,d);return}if(d.type==="room_join"){await this.joinRoom(ws,m,d);return}if(d.type==="room_leave"){await this.leaveRoom(ws,m);return}if(d.type==="room_ready"){await this.ready(ws,m,!!d.value);return}if(d.type==="room_start"){await this.start(ws,m);return}if(d.type==="battle_action"){await this.battleAction(ws,m,d);return}}
-find(id){return(this.room?.players||[]).find(p=>p.id===id)}
-async createRoom(ws,m,d){if(m.roomId){this.send(ws,{type:"room_error",error:"Already in a room"});return}if(this.room&&this.room.status!=="finished"){this.send(ws,{type:"room_error",error:"Room already exists"});return}const mode=["duel","chaos","group"].includes(d.mode)?d.mode:"duel",max=mode==="duel"?2:MAX_ROOM,roomId=String(d.roomId||crypto.randomUUID().slice(0,8)).replace(/[^a-zA-Z0-9_-]/g,"").slice(0,16)||crypto.randomUUID().slice(0,8);this.room={roomId,mode,status:"waiting",ownerId:m.id,createdAt:Date.now(),startsAt:Date.now()+180000,round:0,turn:null,players:[roomPlayer(m,mode==="group"?Number(d.team)||1:null)],battle:null};m.roomId=roomId;ws.serializeAttachment(m);await this.persist();this.send(ws,{type:"room_state",room:safeRoom(this.room),you:m.id,max});this.broadcast({type:"room_state",room:safeRoom(this.room),you:null,max})}
-async joinRoom(ws,m,d){if(m.roomId){this.send(ws,{type:"room_error",error:"Already in a room"});return}if(!this.room||this.room.status!=="waiting"){this.send(ws,{type:"room_error",error:"Room not found or already started"});return}if(String(d.roomId||"")!==this.room.roomId){this.send(ws,{type:"room_error",error:"Wrong room code"});return}if(this.room.players.length>=(this.room.mode==="duel"?2:MAX_ROOM)){this.send(ws,{type:"room_error",error:"Room is full"});return}const team=this.room.mode==="group"?(this.room.players.filter(p=>p.team===1).length<=this.room.players.filter(p=>p.team===2).length?1:2):null;this.room.players.push(roomPlayer(m,team));m.roomId=this.room.roomId;ws.serializeAttachment(m);await this.persist();this.broadcast({type:"room_state",room:safeRoom(this.room),you:null,max:this.room.mode==="duel"?2:MAX_ROOM})}
-async leaveRoom(ws,m){if(!m.roomId||!this.room)return;const p=this.find(m.id);if(p)p.connected=false;this.room.players=this.room.players.filter(p=>p.id!==m.id);m.roomId=null;ws.serializeAttachment(m);if(this.room.players.length===0){this.room=null;await this.ctx.storage.delete("room");return}if(this.room.ownerId===m.id)this.room.ownerId=this.room.players[0].id;await this.persist();this.broadcast({type:"room_state",room:safeRoom(this.room),you:null,max:this.room.mode==="duel"?2:MAX_ROOM})}
-async ready(ws,m,value){if(!this.room||m.roomId!==this.room.roomId||this.room.status!=="waiting")return;const p=this.find(m.id);if(!p)return;p.ready=value;await this.persist();this.broadcast({type:"room_state",room:safeRoom(this.room),you:null,max:this.room.mode==="duel"?2:MAX_ROOM})}
-async start(ws,m){if(!this.room||m.roomId!==this.room.roomId)return;if(this.room.ownerId!==m.id){this.send(ws,{type:"room_error",error:"Only room owner can start"});return}if(this.room.players.length<2){this.send(ws,{type:"room_error",error:"Need at least 2 players"});return}if(this.room.mode==="chaos"){this.room.players.forEach((p,i)=>p.team=(i%2)+1)}this.room.players.forEach(p=>{p.ready=true;p.hp=120;p.maxHp=120;p.defeated=false});this.room.status="battle";this.room.round=1;this.room.turn=this.room.players[0].id;this.room.battle={phase:"choose",turn:this.room.turn,round:1,logs:[`⚔️ ${this.room.mode} — серверный бой начался.`]};await this.persist();this.broadcast({type:"battle_state",room:safeRoom(this.room),you:null})}
-async battleAction(ws,m,d){if(!this.room||m.roomId!==this.room.roomId||this.room.status!=="battle")return;if(this.room.turn!==m.id){this.send(ws,{type:"room_error",error:"Сейчас ход другого игрока"});return}const attack=String(d.attack||""),defense=Array.isArray(d.defense)?d.defense.map(String).filter(x=>DEF_ZONES.includes(x)).slice(0,2):[],targetId=String(d.targetId||"");if(!ZONES.includes(attack)||defense.length!==2){this.send(ws,{type:"room_error",error:"Выбери атаку и ровно 2 защиты"});return}const me=this.find(m.id),targets=this.room.players.filter(p=>p.team!==me.team&&!p.defeated),target=targets.find(p=>p.id===targetId)||targets[0];if(!target){this.send(ws,{type:"room_error",error:"Нет доступной цели"});return}const hit=Math.max(8,24+(Number(me.level)-1)*2-(attack===defense[0]||attack===defense[1]?8:0));target.hp=Math.max(0,target.hp-hit);if(target.hp<=0)target.defeated=true;this.room.battle.logs.push(`⚔️ ${me.name} атаковал ${target.name}: −${hit} HP (${attack}).`);const enemies=this.room.players.filter(p=>p.team!==me.team&&!p.defeated);if(enemies.length===0){this.room.status="finished";this.room.battle.phase="victory";this.room.battle.logs.push(`🏆 Победа команды игрока ${me.name}.`);await this.persist();this.broadcast({type:"battle_state",room:safeRoom(this.room),you:null});return}const livingEnemies=enemies;const enemy=livingEnemies[0],counter=Math.max(5,14+(Number(enemy.level)-1));me.hp=Math.max(0,me.hp-counter);if(me.hp<=0)me.defeated=true;this.room.battle.logs.push(`🛡️ ${enemy.name} ответил: −${counter} HP.`);if(me.defeated){this.room.status="finished";this.room.battle.phase="defeat";this.room.battle.logs.push(`💀 ${me.name} повержен.`);await this.persist();this.broadcast({type:"battle_state",room:safeRoom(this.room),you:null});return}this.room.round++;const living=this.room.players.filter(p=>!p.defeated);const next=living.find(p=>p.id===this.room.turn)?.id||living[0]?.id;this.room.turn=next;this.room.battle.round=this.room.round;this.room.battle.turn=next;await this.persist();this.broadcast({type:"battle_state",room:safeRoom(this.room),you:null})}
-async webSocketClose(ws){const m=ws.deserializeAttachment?.();if(!m?.authenticated||!m.roomId||!this.room)return;const p=this.find(m.id);if(p)p.connected=false;await this.persist();this.broadcast({type:"room_state",room:safeRoom(this.room),you:null,max:this.room.mode==="duel"?2:MAX_ROOM})}}
-export default {async fetch(request,env){if(request.method==="OPTIONS")return new Response(null,{status:204,headers:{"access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"Content-Type","access-control-max-age":"86400"}});const url=new URL(request.url);if(url.pathname==="/api/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.5.0",telegramConfigured:Boolean(env.TELEGRAM_BOT_TOKEN),realtime:true,rooms:true,serverShop:true});if(url.pathname==="/telegram/webhook"){if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);let u;try{u=await request.json()}catch{return json({ok:false,error:"Invalid JSON"},400)}try{await handleTelegramUpdate(u,env)}catch(e){console.error("Telegram webhook error",e)}return json({ok:true})}if(url.pathname==="/api/setup-telegram-webhook"){if(request.method!=="GET")return json({ok:false,error:"Method not allowed"},405);if(!env.TELEGRAM_BOT_TOKEN)return json({ok:false,error:"Telegram token is not configured"},500);const result=await telegramApi("setWebhook",{url:`${url.origin}/telegram/webhook`,allowed_updates:["message"]},env.TELEGRAM_BOT_TOKEN);return json({ok:Boolean(result?.ok),webhookUrl:`${url.origin}/telegram/webhook`,telegram:result},result?.ok?200:502)}if(url.pathname==="/api/telegram-webhook-info"){if(!env.TELEGRAM_BOT_TOKEN)return json({ok:false,error:"Telegram token is not configured"},500);const result=await telegramApi("getWebhookInfo",{},env.TELEGRAM_BOT_TOKEN);return json(result,result?.ok?200:502)}if(url.pathname==="/api/shop"){if(request.method!=="GET")return json({ok:false,error:"Method not allowed"},405);return json({ok:true,version:"G84",currency:"coins",items:Object.entries(SHOP).map(([id,item])=>({id,...item}))})}if(url.pathname==="/api/auth"||url.pathname==="/api/save"||url.pathname==="/api/action"){if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);let body;try{body=await request.clone().json()}catch{return json({ok:false,error:"Invalid JSON"},400)}let user;try{user=JSON.parse(new URLSearchParams(body.initData||"").get("user")||"null")}catch{user=null}if(!user||!Number.isSafeInteger(user.id))return json({ok:false,error:"Telegram user is missing"},401);const id=env.GAME_HUB.idFromName(`player:${user.id}`);return env.GAME_HUB.get(id).fetch(request)}if(url.pathname==="/api/ws"){if(request.headers.get("Upgrade")?.toLowerCase()!=="websocket")return json({ok:false,error:"WebSocket upgrade required"},426);return env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName("global")).fetch(request)}if(url.pathname==="/api/room/ws"){if(request.headers.get("Upgrade")?.toLowerCase()!=="websocket")return json({ok:false,error:"WebSocket upgrade required"},426);const roomId=new URL(request.url).searchParams.get("roomId")||"lobby";return env.ROOM_HUB.get(env.ROOM_HUB.idFromName(`room:${roomId}`)).fetch(request)}return json({ok:false,error:"Not found"},404)}};
+const ADMIN_COOKIE = "territory_admin";
+const MAX_INIT_AGE = 24 * 60 * 60;
+const MIN_ACTION_MS = 150;
+
+const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
+  status,
+  headers: {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    ...headers
+  }
+});
+
+const page = (body, status = 200) => new Response(body, {
+  status,
+  headers: {"content-type":"text/html; charset=utf-8","cache-control":"no-store"}
+});
+
+const now = () => Math.floor(Date.now() / 1000);
+const day = (ms = Date.now()) => new Date(ms).toISOString().slice(0,10);
+const n = (v, d=0) => Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : d;
+const clamp = (v,a,b) => Math.max(a, Math.min(b, n(v)));
+const s = v => String(v ?? "");
+
+function cookies(request) {
+  const out = {};
+  for (const part of (request.headers.get("cookie") || "").split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0) out[part.slice(0,i).trim()] = decodeURIComponent(part.slice(i+1).trim());
+  }
+  return out;
+}
+
+async function hmac(key, message) {
+  const k = await crypto.subtle.importKey(
+    "raw", key instanceof Uint8Array ? key : new TextEncoder().encode(key),
+    {name:"HMAC",hash:"SHA-256"}, false, ["sign"]
+  );
+  return new Uint8Array(await crypto.subtle.sign(
+    "HMAC", k, new TextEncoder().encode(message)
+  ));
+}
+
+function hex(bytes) {
+  return [...bytes].map(x=>x.toString(16).padStart(2,"0")).join("");
+}
+
+function equal(a,b) {
+  const x = typeof a === "string" ? new TextEncoder().encode(a) : a;
+  const y = typeof b === "string" ? new TextEncoder().encode(b) : b;
+  if (x.length !== y.length) return false;
+  let z = 0;
+  for (let i=0;i<x.length;i++) z |= x[i]^y[i];
+  return z === 0;
+}
+
+async function telegramAuth(initData, botToken) {
+  if (!initData || !botToken) throw new Error("Telegram auth is not configured");
+  const p = new URLSearchParams(initData);
+  const hash = (p.get("hash") || "").toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error("Invalid Telegram hash");
+
+  const authDate = n(p.get("auth_date"));
+  if (!authDate || Math.abs(now()-authDate) > MAX_INIT_AGE) {
+    throw new Error("Telegram initData expired");
+  }
+
+  const data = [...p.entries()]
+    .filter(([k])=>k!=="hash")
+    .sort((a,b)=>a[0].localeCompare(b[0]))
+    .map(([k,v])=>`${k}=${v}`)
+    .join("\n");
+
+  // Telegram Web Apps validation:
+  // secret_key = HMAC_SHA256(key="WebAppData", message=bot_token)
+  // hash = HMAC_SHA256(key=secret_key, message=data_check_string)
+  const secret = await hmac("WebAppData", botToken);
+  const expected = await hmac(secret, data);
+  const supplied = new Uint8Array(
+    (hash.match(/../g) || []).map(x=>parseInt(x,16))
+  );
+  if (!equal(expected,supplied)) throw new Error("Invalid Telegram initData");
+
+  let user;
+  try { user = JSON.parse(p.get("user") || "{}"); } catch { user = {}; }
+  if (!user?.id) throw new Error("Telegram user is missing");
+  return {user, authDate};
+}
+
+async function signedAdminToken(password) {
+  const body = `${now()}.${crypto.randomUUID()}`;
+  const sig = hex(await hmac(password, body));
+  return `${body}.${sig}`;
+}
+
+async function verifyAdminToken(token, password) {
+  if (!token || !password) return false;
+  const [body, sig] = token.split(".");
+  if (!body || !sig) return false;
+  if (!equal(hex(await hmac(password,body)),sig)) return false;
+  const issued = n(body.split(".")[0]);
+  return issued > 0 && now()-issued <= 8*60*60;
+}
+
+async function bodyJSON(request) {
+  try { return await request.json(); } catch { return {}; }
+}
+
+async function dbCall(stub, path, method="GET", body=null, headers={}) {
+  return stub.fetch(new Request(`https://territory-db${path}`, {
+    method,
+    headers: {"content-type":"application/json",...headers},
+    body: method==="GET" || method==="HEAD" ? undefined : JSON.stringify(body ?? {})
+  }));
+}
+
+async function dbJSON(stub, path, method="GET", body=null) {
+  const r = await dbCall(stub,path,method,body);
+  const d = await r.json().catch(()=>({error:"Database error"}));
+  if (!r.ok) throw new Error(d.error || "Database error");
+  return d;
+}
+
+async function playerFromTelegram(request, env, stub) {
+  const initData = request.headers.get("x-telegram-init-data") || "";
+  if (!initData) throw new Response(JSON.stringify({error:"Authentication required"}),{
+    status:401,headers:{"content-type":"application/json"}
+  });
+
+  let auth;
+  try { auth = await telegramAuth(initData, env.BOT_TOKEN); }
+  catch (e) {
+    throw new Response(JSON.stringify({error:e.message}),{
+      status:401,headers:{"content-type":"application/json"}
+    });
+  }
+
+  const p = await dbJSON(stub,"/db/upsert","POST",{user:auth.user});
+  if (p.banned) throw new Response(JSON.stringify({error:"Account banned"}),{
+    status:403,headers:{"content-type":"application/json"}
+  });
+  return p;
+}
+
+function adminHTML() {
+return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Territory Admin G90.2</title>
+<style>body{margin:0;background:#0a1016;color:#edf4f7;font-family:system-ui,-apple-system,sans-serif}header{padding:15px;background:#111b24;position:sticky;top:0;z-index:3;border-bottom:1px solid #263642}main{max-width:1180px;margin:auto;padding:14px}.tabs{display:flex;gap:7px;overflow:auto;margin-bottom:12px}button,input,select,textarea{font:inherit}button{padding:9px 12px;border:1px solid #3b4d59;border-radius:9px;background:#182630;color:#fff;cursor:pointer}button:hover{background:#243640}.danger{background:#632522}.good{background:#24502e}.muted{color:#91a2ab;font-size:12px}.panel{display:none}.panel.active{display:block}.card{background:#111b23;border:1px solid #273742;border-radius:12px;padding:13px;margin:9px 0}.row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:9px}input,select,textarea{box-sizing:border-box;width:100%;padding:9px;background:#0d151c;border:1px solid #394b56;border-radius:8px;color:#fff}table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid #26343d;text-align:left;font-size:13px;vertical-align:top}.click{cursor:pointer}.click:hover{background:#17242c}.pill{display:inline-block;padding:3px 7px;border-radius:999px;background:#24343e;font-size:11px}.modal{position:fixed;inset:0;background:#000b;display:none;align-items:flex-start;justify-content:center;padding:20px;overflow:auto;z-index:10}.modal.show{display:flex}.modalbox{width:min(1050px,100%);background:#101a22;border:1px solid #334752;border-radius:14px;padding:14px}.actions button{margin:3px}.history{max-height:380px;overflow:auto}.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px}.kv div{background:#0c141a;padding:8px;border-radius:8px}.small{font-size:12px}.dangerText{color:#ff8f86}</style></head><body>
+<header><b>⚔️ Territory · G90.2 Admin</b><span id="status" class="muted"></span></header><main>
+<div id="login" class="card"><h2>Вход администратора</h2><input id="pw" type="password" placeholder="Пароль"><br><br><button onclick="login()">Войти</button><span id="msg" class="dangerText"></span></div>
+<div id="app" style="display:none"><div class="tabs"><button onclick="tab('players')">Игроки</button><button onclick="tab('finance')">Финансы</button><button onclick="tab('prices')">Магазин</button><button onclick="tab('anti')">Античит</button><button onclick="tab('logs')">Логи</button><button onclick="tab('broadcast')">🎁 Всем</button></div>
+<section id="players" class="panel active"><div class="card"><div class="row"><div style="flex:1;min-width:220px"><input id="q" placeholder="Telegram ID / username / имя" onkeydown="if(event.key==='Enter')loadPlayers()"></div><button onclick="loadPlayers()">Поиск</button><button onclick="openById()">Открыть ID</button></div></div><div id="pb"></div></section>
+<section id="finance" class="panel"><div id="fb"></div></section><section id="broadcast" class="panel"><div class="card"><h2>🎁 Массовый подарок</h2><p class="muted">Отправляет подарок через игровую почту. Баланс игроков напрямую не изменяется.</p><div class="grid"><div><label>Кому</label><select id="bcAudience"><option value="all">Всем игрокам</option><option value="active">Активным игрокам (30 дней)</option><option value="level">По уровню</option></select></div><div id="bcLevelBox" style="display:none"><label>Минимальный уровень</label><input id="bcMinLevel" type="number" min="1" value="1"></div><div><label>Тема</label><input id="bcSubject" value="🎉 Подарок от Territory"></div><div><label>Монеты</label><input id="bcCoins" type="number" min="0" value="1000"></div><div><label>Кристаллы</label><input id="bcGems" type="number" min="0" value="0"></div><div><label>ID оружия/предмета (необязательно)</label><input id="bcWeapon" placeholder="например weapon_01"></div></div><br><label>Текст письма</label><textarea id="bcBody" rows="5">🎉 Поздравляем с праздником! Это подарок от команды Territory.</textarea><br><br><label>Причина/название рассылки</label><input id="bcReason" value="Праздничная рассылка"><br><br><button class="good" onclick="sendBroadcast()">📨 Отправить подарок</button><div id="bcResult" class="muted"></div></div><div id="bchistory"></div></section><section id="prices" class="panel"><div id="prb"></div></section><section id="anti" class="panel"><div id="ab"></div></section><section id="logs" class="panel"><div id="lb"></div></section></div></main>
+<div id="modal" class="modal"><div class="modalbox"><div class="row"><h2 id="mt" style="flex:1">Игрок</h2><button onclick="closeModal()">Закрыть</button></div><div id="mb"></div></div></div>
+<script>
+const $=x=>document.getElementById(x);const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(u,o={}){let r=await fetch(u,{...o,headers:{'content-type':'application/json',...(o.headers||{})}});let d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||r.statusText);return d}
+async function login(){try{await api('/admin/login',{method:'POST',body:JSON.stringify({password:$('pw').value})});$('login').style.display='none';$('app').style.display='block';loadPlayers();}catch(e){$('msg').textContent=' '+e.message}}
+function tab(id){document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));$(id).classList.add('active');({players:loadPlayers,finance,prices,anti,logs,broadcast}[id])()}
+function openById(){const id=$('q').value.trim();if(id)openPlayer(id)}
+async function loadPlayers(offset=0){try{const d=await api('/admin/api/players?q='+encodeURIComponent($('q').value)+'&offset='+offset);let h='<div class="card"><span class="muted">Найдено: '+d.total+'</span></div><div class="card"><table><tr><th>Telegram ID</th><th>Игрок</th><th>Ур.</th><th>Монеты</th><th>Кристаллы</th><th>Статус</th><th></th></tr>';for(const p of d.rows){h+='<tr class="click" onclick="openPlayer(\\''+esc(p.id)+'\\')"><td>'+esc(p.id)+'</td><td>'+esc(p.first_name||p.username||'')+'<br><span class="muted">@'+esc(p.username)+'</span></td><td>'+p.level+'</td><td>'+p.coins+'</td><td>'+p.gems+'</td><td>'+(p.banned?'<span class="pill dangerText">BAN</span>':'<span class="pill">OK</span>')+'</td><td><button onclick="event.stopPropagation();openPlayer(\\''+esc(p.id)+'\\')">Открыть</button></td></tr>'}h+='</table></div>';h+='<div class="row">';if(d.offset>0)h+='<button onclick="loadPlayers('+Math.max(0,d.offset-d.limit)+')">← Назад</button>';if(d.offset+d.limit<d.total)h+='<button onclick="loadPlayers('+(d.offset+d.limit)+')">Далее →</button>';h+='</div>';$('pb').innerHTML=h}catch(e){$('pb').innerHTML='<div class="card dangerText">'+esc(e.message)+'</div>'}}
+async function openPlayer(id){try{const d=await api('/admin/api/player/'+encodeURIComponent(id));if(!d){alert('Игрок не найден');return}$('mt').textContent='Игрок '+id;renderPlayer(d);$('modal').classList.add('show')}catch(e){alert(e.message)}}
+function renderPlayer(d){const p=d.player;let h='<div class="grid"><div class="card"><h3>Профиль</h3><div class="kv"><div>ID<br><b>'+esc(p.telegram_id)+'</b></div><div>Имя<br><b>'+esc(p.first_name)+' '+esc(p.last_name)+'</b></div><div>Username<br><b>@'+esc(p.username)+'</b></div><div>Уровень<br><b>'+p.level+'</b></div><div>XP<br><b>'+p.exp+'</b></div><div>Статус<br><b>'+(p.banned?'BAN':'Активен')+'</b></div><div>Монеты<br><b>'+p.coins+'</b></div><div>Кристаллы<br><b>'+p.gems+'</b></div></div></div><div class="card"><h3>Управление</h3><div class="actions"><button onclick="adjust('coins')">Монеты ±</button><button onclick="adjust('gems')">Кристаллы ±</button><button onclick="adjust('exp')">XP ±</button><button onclick="adjust('level')">Уровень</button><button onclick="adjust('hp')">HP ±</button><button onclick="giftPlayer()">Подарок в почту</button><button class="'+(p.banned?'good':'danger')+'" onclick="toggleBan('+(p.banned?0:1)+')">'+(p.banned?'Разбан':'Бан')+'</button></div></div></div>';
+h+='<div class="card"><h3>Инвентарь</h3><table><tr><th>Предмет</th><th>Количество</th></tr>'+(d.inventory.length?d.inventory.map(x=>'<tr><td>'+esc(x.icon)+' '+esc(x.name)+'</td><td>'+x.quantity+'</td></tr>').join(''):'<tr><td colspan="2" class="muted">Пусто</td></tr>')+'</table></div>';
+h+='<div class="card"><h3>История действий</h3><div class="row"><select id="hf" onchange="historyFilter()"><option value="">Все</option><option>Admin</option><option>Shop</option><option>Mail</option><option>Arena</option><option>Anti-cheat</option><option>Auth</option><option>Tournament</option></select></div><div id="hist" class="history"></div></div>';
+h+='<div class="card"><h3>Экономика</h3><table><tr><th>Валюта</th><th>Изменение</th><th>До</th><th>После</th><th>Причина</th></tr>'+d.ledger.map(x=>'<tr><td>'+esc(x.currency)+'</td><td>'+x.amount+'</td><td>'+x.balance_before+'</td><td>'+x.balance_after+'</td><td>'+esc(x.reason)+'</td></tr>').join('')+'</table></div>';
+h+='<div class="card"><h3>Почта</h3><table><tr><th>Письмо</th><th>Вложения</th><th>Статус</th></tr>'+d.mail.map(x=>'<tr><td>'+esc(x.subject)+'</td><td>🪙 '+x.coins+' 💎 '+x.gems+' '+esc(x.weapon_id)+'</td><td>'+(x.claimed?'Получено':'Ожидает')+'</td></tr>').join('')+'</table></div>';$('mb').innerHTML=h;historyFilter()}
+async function historyFilter(){const id=$('mt').textContent.replace('Игрок ','').trim();const d=await api('/admin/api/player/'+encodeURIComponent(id)+'/history?category='+encodeURIComponent($('hf').value));$('hist').innerHTML='<table><tr><th>Время</th><th>Категория</th><th>Действие</th><th>Детали</th></tr>'+d.map(x=>'<tr><td>'+new Date(x.created_at*1000).toLocaleString()+'</td><td>'+esc(x.category)+'</td><td>'+esc(x.action)+'</td><td>'+esc(x.details)+'</td></tr>').join('')+'</table>'}
+async function adjust(action){const amount=prompt(action==='level'?'Новый уровень':'Изменение количества','0');if(amount===null)return;const reason=prompt('Причина (обязательно)','Коррекция администратора');if(!reason)return;await api('/admin/api/adjust',{method:'POST',body:JSON.stringify({id:$('mt').textContent.replace('Игрок ','').trim(),action,amount,reason})});await openPlayer($('mt').textContent.replace('Игрок ','').trim())}
+async function giftPlayer(){const id=$('mt').textContent.replace('Игрок ','').trim();const coins=prompt('Монеты','0');if(coins===null)return;const gems=prompt('Кристаллы','0');if(gems===null)return;const weapon_id=prompt('ID оружия (необязательно)','')||'';const reason=prompt('Причина','Подарок от администрации');if(!reason)return;await api('/admin/api/gift',{method:'POST',body:JSON.stringify({id,coins,gems,weapon_id,reason,subject:'Подарок от администрации',body:reason})});alert('Письмо отправлено');openPlayer(id)}
+async function toggleBan(b){const id=$('mt').textContent.replace('Игрок ','').trim();const reason=prompt('Причина',b?'Нарушение правил':'Снятие блокировки');if(!reason)return;await api('/admin/api/ban',{method:'POST',body:JSON.stringify({id,banned:b,reason})});openPlayer(id);loadPlayers()}
+function closeModal(){$('modal').classList.remove('show')}
+function broadcast(){
+  $('bcAudience').onchange=()=>{ $('bcLevelBox').style.display=$('bcAudience').value==='level'?'block':'none'; };
+  loadBroadcastHistory();
+}
+async function sendBroadcast(){
+  const audience=$('bcAudience').value, minLevel=Math.max(1,Number($('bcMinLevel').value||1));
+  const coins=Math.max(0,Number($('bcCoins').value||0)), gems=Math.max(0,Number($('bcGems').value||0));
+  const subject=$('bcSubject').value.trim(), body=$('bcBody').value.trim(), reason=$('bcReason').value.trim(), weapon_id=$('bcWeapon').value.trim();
+  if(!subject||!body||!reason){alert('Тема, текст и причина обязательны');return}
+  const preview=await api('/admin/api/broadcast/preview?audience='+encodeURIComponent(audience)+'&min_level='+minLevel);
+  const total=preview.total||0;
+  if(!confirm('Получателей: '+total+'\n\nНаграда каждому: '+coins+' монет + '+gems+' кристаллов'+(weapon_id?' + '+weapon_id:'')+'\n\nОтправить сейчас?'))return;
+  try{const d=await api('/admin/api/broadcast',{method:'POST',body:JSON.stringify({audience,min_level:minLevel,coins,gems,weapon_id,subject,body,reason})});$('bcResult').textContent='Готово: отправлено '+d.sent+' игрокам. ID рассылки: '+d.broadcast_id;loadBroadcastHistory()}catch(e){alert(e.message)}
+}
+async function loadBroadcastHistory(){try{const d=await api('/admin/api/broadcasts');$('bchistory').innerHTML='<div class="card"><h3>История массовых рассылок</h3><table><tr><th>Дата</th><th>Название</th><th>Получателей</th><th>Награда</th><th>Причина</th></tr>'+d.map(x=>'<tr><td>'+new Date(x.created_at*1000).toLocaleString()+'</td><td>'+esc(x.subject)+'</td><td>'+x.recipient_count+'</td><td>🪙 '+x.coins+' 💎 '+x.gems+(x.weapon_id?' 🎁 '+esc(x.weapon_id):'')+'</td><td>'+esc(x.reason)+'</td></tr>').join('')+'</table></div>'}catch(e){$('bchistory').innerHTML='<div class="card dangerText">'+esc(e.message)+'</div>'}}
+async function finance(){const d=await api('/admin/api/finance');$('fb').innerHTML='<div class="grid"><div class="card">Доход за 24ч: <b>'+d.dailyIncome+'</b></div><div class="card">Подтверждённые платежи: <b>'+d.paymentCount+'</b></div></div><div class="card"><h3>Топ донатеров</h3><table><tr><th>ID</th><th>Сумма</th><th>Платежей</th></tr>'+d.topDonors.map(x=>'<tr><td>'+esc(x.id)+'</td><td>'+x.total+'</td><td>'+x.payments+'</td></tr>').join('')+'</table></div>'}
+async function prices(){const d=await api('/admin/api/prices');$('prb').innerHTML='<div class="card"><table><tr><th>Оружие</th><th>Цена</th><th>Урон</th><th></th></tr>'+d.map(x=>'<tr><td>'+esc(x.icon)+' '+esc(x.name)+'</td><td><input id="p_'+esc(x.item_id)+'" value="'+x.price+'"></td><td>'+x.damage+'</td><td><button onclick="price(\\''+esc(x.item_id)+'\\')">Сохранить</button></td></tr>').join('')+'</table></div>'}
+async function price(id){const reason=prompt('Причина изменения цены','Коррекция магазина');if(!reason)return;await api('/admin/api/price',{method:'POST',body:JSON.stringify({item_id:id,price:$('p_'+id).value,reason})});prices()}
+async function anti(){const d=await api('/admin/api/anticheat');$('ab').innerHTML='<div class="card"><table><tr><th>ID</th><th>Игрок</th><th>Нарушения</th><th>Последнее</th><th>Статус</th></tr>'+d.map(x=>'<tr><td>'+esc(x.id)+'</td><td>'+esc(x.first_name||x.username||'')+'</td><td>'+x.strikes+'</td><td>'+x.last_action_ms+'</td><td>'+(x.banned?'BAN':'OK')+'</td></tr>').join('')+'</table></div>'}
+async function logs(){const d=await api('/admin/api/logs');$('lb').innerHTML='<div class="card"><table><tr><th>Время</th><th>Игрок</th><th>Действие</th><th>Причина</th></tr>'+d.map(x=>'<tr><td>'+new Date(x.created_at*1000).toLocaleString()+'</td><td>'+esc(x.telegram_id)+'</td><td>'+esc(x.action)+'</td><td>'+esc(x.reason)+'</td></tr>').join('')+'</table></div>'}
+</script></body></html>`}
+
+
+export class TerritoryDB {
+  constructor(ctx, env) {
+    this.ctx=ctx; this.env=env; this.sql=ctx.storage.sql; this.ready=false;
+  }
+
+  init() {
+    if (this.ready) return;
+    this.sql.exec(`
+      PRAGMA foreign_keys=ON;
+      CREATE TABLE IF NOT EXISTS players(
+        telegram_id TEXT PRIMARY KEY, username TEXT DEFAULT '', first_name TEXT DEFAULT '',
+        last_name TEXT DEFAULT '', photo_url TEXT DEFAULT '', level INTEGER NOT NULL DEFAULT 1,
+        exp INTEGER NOT NULL DEFAULT 0, hp INTEGER NOT NULL DEFAULT 120,
+        max_hp INTEGER NOT NULL DEFAULT 120, coins INTEGER NOT NULL DEFAULT 1000,
+        gems INTEGER NOT NULL DEFAULT 25, strength INTEGER NOT NULL DEFAULT 5,
+        agility INTEGER NOT NULL DEFAULT 5, defense INTEGER NOT NULL DEFAULT 0,
+        weapon TEXT DEFAULT 'Кулаки', banned INTEGER NOT NULL DEFAULT 0,
+        ban_reason TEXT DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS shop_catalog(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, item_id TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '⚔️',
+        price_coins INTEGER NOT NULL DEFAULT 0, damage INTEGER NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS inventory(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, telegram_id TEXT NOT NULL,
+        item_id TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 1,
+        UNIQUE(telegram_id,item_id)
+      );
+      CREATE TABLE IF NOT EXISTS player_mail(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, telegram_id TEXT NOT NULL,
+        sender TEXT NOT NULL DEFAULT 'system', subject TEXT NOT NULL,
+        body TEXT NOT NULL DEFAULT '', coins INTEGER NOT NULL DEFAULT 0,
+        gems INTEGER NOT NULL DEFAULT 0, weapon_id TEXT DEFAULT '',
+        claimed INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+        claimed_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS daily_scores(
+        day TEXT NOT NULL, telegram_id TEXT NOT NULL, score INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL, PRIMARY KEY(day,telegram_id)
+      );
+      CREATE TABLE IF NOT EXISTS tournament_awards(
+        day TEXT NOT NULL, telegram_id TEXT NOT NULL, place INTEGER NOT NULL,
+        gold INTEGER NOT NULL, PRIMARY KEY(day,telegram_id), UNIQUE(day,place)
+      );
+      CREATE TABLE IF NOT EXISTS finance(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, telegram_id TEXT NOT NULL,
+        kind TEXT NOT NULL, amount INTEGER NOT NULL, created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS anti_cheat(
+        telegram_id TEXT PRIMARY KEY, strikes INTEGER NOT NULL DEFAULT 0,
+        last_action_ms INTEGER NOT NULL DEFAULT 0, banned INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS economy_ledger(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, telegram_id TEXT NOT NULL,
+        currency TEXT NOT NULL, amount INTEGER NOT NULL, balance_before INTEGER, balance_after INTEGER,
+        kind TEXT NOT NULL, reference TEXT DEFAULT '', reason TEXT DEFAULT '', created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS player_events(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, telegram_id TEXT NOT NULL, category TEXT NOT NULL,
+        action TEXT NOT NULL, details TEXT DEFAULT '', created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS mail_broadcasts(
+        broadcast_id TEXT PRIMARY KEY, admin_id TEXT NOT NULL DEFAULT 'admin', audience TEXT NOT NULL,
+        min_level INTEGER NOT NULL DEFAULT 1, subject TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+        coins INTEGER NOT NULL DEFAULT 0, gems INTEGER NOT NULL DEFAULT 0, weapon_id TEXT DEFAULT '',
+        reason TEXT NOT NULL DEFAULT '', recipient_count INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS admin_audit(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id TEXT NOT NULL DEFAULT 'admin',
+        telegram_id TEXT DEFAULT '', action TEXT NOT NULL, before_json TEXT DEFAULT '', after_json TEXT DEFAULT '',
+        reason TEXT DEFAULT '', created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_events_player ON player_events(telegram_id,created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_ledger_player ON economy_ledger(telegram_id,created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_admin_audit_player ON admin_audit(telegram_id,created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_mail ON player_mail(telegram_id,claimed,created_at);
+      CREATE INDEX IF NOT EXISTS idx_score ON daily_scores(day,score DESC);
+      CREATE INDEX IF NOT EXISTS idx_players_username ON players(username);
+      CREATE INDEX IF NOT EXISTS idx_players_updated ON players(updated_at DESC);
+    `);
+
+    if (!this.sql.exec(`SELECT 1 FROM shop_catalog LIMIT 1`).toArray().length) {
+      const t=now();
+      for (const x of [
+        ["axe","Боевой топор","🪓",300,12],
+        ["sword","Стальной меч","⚔️",650,18],
+        ["hammer","Молот","🔨",1000,25],
+        ["crossbow","Арбалет","🏹",1500,31]
+      ]) this.sql.exec(
+        `INSERT INTO shop_catalog(item_id,name,icon,price_coins,damage,active,updated_at)
+         VALUES(?,?,?,?,?,1,?)`,...x,t
+      );
+    }
+    this.ready=true;
+  }
+
+  player(id){this.init();return this.sql.exec(`SELECT * FROM players WHERE telegram_id=?`,id).toArray()[0]||null}
+
+  upsert(user){
+    this.init(); const id=s(user.id),t=now();
+    this.sql.exec(`INSERT INTO players
+      (telegram_id,username,first_name,last_name,photo_url,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?)
+      ON CONFLICT(telegram_id) DO UPDATE SET
+      username=excluded.username,first_name=excluded.first_name,
+      last_name=excluded.last_name,photo_url=excluded.photo_url,updated_at=excluded.updated_at`,
+      id,s(user.username),s(user.first_name),s(user.last_name),s(user.photo_url),t,t);
+    this.event(id,'Auth','login','Telegram WebApp authentication');
+    return this.player(id);
+  }
+
+  progress(id,p){
+    this.init();
+    const allowed=["level","exp","hp","max_hp","coins","gems","strength","agility","defense","weapon"];
+    const sets=[],args=[];
+    for(const k of allowed) if(p[k]!==undefined){
+      sets.push(`${k}=?`);
+      args.push(k==="weapon"?s(p[k]).slice(0,80):clamp(p[k],0,1000000000));
+    }
+    if(!sets.length)return this.player(id);
+    sets.push("updated_at=?"); args.push(now(),id);
+    this.sql.exec(`UPDATE players SET ${sets.join(",")} WHERE telegram_id=?`,...args);
+    return this.player(id);
+  }
+
+  catalog(){this.init();return this.sql.exec(
+    `SELECT item_id,name,icon,price_coins AS price,damage FROM shop_catalog
+     WHERE active=1 ORDER BY id`).toArray();}
+
+  buy(id,itemId){
+    this.init();
+    const p=this.player(id), w=this.sql.exec(
+      `SELECT * FROM shop_catalog WHERE item_id=? AND active=1`,itemId
+    ).toArray()[0];
+    if(!p||!w)throw Error("Item not found");
+    if(p.coins<w.price_coins)throw Error("Not enough coins");
+    const before=p.coins, after=before-w.price_coins;
+    this.sql.exec(`UPDATE players SET coins=?,weapon=?,updated_at=? WHERE telegram_id=?`,after,w.name,now(),id);
+    this.sql.exec(`INSERT INTO economy_ledger(telegram_id,currency,amount,balance_before,balance_after,kind,reference,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,id,'coins',-w.price_coins,before,after,'shop_purchase',w.item_id,'Shop purchase',now());
+    this.event(id,'Shop','buy',JSON.stringify({item_id:w.item_id,price:w.price_coins}));
+    this.sql.exec(`INSERT INTO inventory(telegram_id,item_id,quantity) VALUES(?,?,1)
+      ON CONFLICT(telegram_id,item_id) DO UPDATE SET quantity=quantity+1`,id,w.item_id);
+    return this.player(id);
+  }
+
+  mail(id){this.init();return this.sql.exec(
+    `SELECT id,sender,subject,body,coins,gems,weapon_id,claimed,created_at
+     FROM player_mail WHERE telegram_id=? ORDER BY id DESC LIMIT 100`,id).toArray();}
+
+  addMail(id,m){
+    this.init();
+    this.sql.exec(`INSERT INTO player_mail
+      (telegram_id,sender,subject,body,coins,gems,weapon_id,claimed,created_at)
+      VALUES(?,?,?,?,?,?,?,0,?)`,
+      id,s(m.sender||"system").slice(0,80),s(m.subject||"Подарок").slice(0,120),
+      s(m.body||"").slice(0,2000),Math.max(0,n(m.coins)),Math.max(0,n(m.gems)),
+      s(m.weapon_id||"").slice(0,80),now());
+  }
+
+  claimMail(id,mailId){
+    this.init();
+    const m=this.sql.exec(`SELECT * FROM player_mail WHERE id=? AND telegram_id=?`,
+      n(mailId),id).toArray()[0];
+    if(!m)throw Error("Mail not found");
+    if(m.claimed)throw Error("Already claimed");
+    if(m.weapon_id&&!this.sql.exec(
+      `SELECT item_id FROM shop_catalog WHERE item_id=?`,m.weapon_id).toArray()[0]
+    )throw Error("Invalid weapon attachment");
+
+    this.sql.exec(`UPDATE players SET coins=coins+?,gems=gems+?,updated_at=? WHERE telegram_id=?`,
+      m.coins,m.gems,now(),id);
+    if(m.weapon_id)this.sql.exec(`INSERT INTO inventory(telegram_id,item_id,quantity)
+      VALUES(?,?,1) ON CONFLICT(telegram_id,item_id) DO UPDATE SET quantity=quantity+1`,
+      id,m.weapon_id);
+    this.sql.exec(`UPDATE player_mail SET claimed=1,claimed_at=? WHERE id=? AND telegram_id=?`,now(),m.id,id);
+    this.event(id,'Mail','claim',JSON.stringify({mail_id:m.id,coins:m.coins,gems:m.gems,weapon_id:m.weapon_id}));
+    return this.player(id);
+  }
+
+  top100(){this.init();return this.sql.exec(`SELECT telegram_id AS id,username,
+    first_name,last_name,photo_url,level,exp FROM players WHERE banned=0
+    ORDER BY level DESC,exp DESC,telegram_id ASC LIMIT 100`).toArray();}
+
+  profile(id){this.init();return this.sql.exec(`SELECT telegram_id AS id,username,
+    first_name,last_name,photo_url,level,exp,hp,max_hp,strength,agility,defense,weapon
+    FROM players WHERE telegram_id=? AND banned=0`,id).toArray()[0]||null;}
+
+  score(id,delta){
+    this.init(); const d=day(),v=clamp(delta,0,10000);
+    this.sql.exec(`INSERT INTO daily_scores(day,telegram_id,score,updated_at)
+      VALUES(?,?,?,?) ON CONFLICT(day,telegram_id)
+      DO UPDATE SET score=score+excluded.score,updated_at=excluded.updated_at`,
+      d,id,v,now());
+  }
+
+  tournament(d){
+    this.init();
+    if(this.sql.exec(`SELECT 1 FROM tournament_awards WHERE day=? LIMIT 1`,d).toArray().length)
+      return {day:d,already:true};
+    const top=this.sql.exec(`SELECT telegram_id,score FROM daily_scores WHERE day=?
+      ORDER BY score DESC,telegram_id ASC LIMIT 3`,d).toArray();
+    const gold=[1000,700,500],result=[];
+    for(let i=0;i<top.length;i++){
+      const id=top[i].telegram_id,g=gold[i];
+      this.sql.exec(`UPDATE players SET coins=coins+?,updated_at=? WHERE telegram_id=?`,g,now(),id);
+      this.sql.exec(`INSERT INTO tournament_awards(day,telegram_id,place,gold) VALUES(?,?,?,?)`,
+        d,id,i+1,g);
+      this.addMail(id,{sender:"Territory Tournament",subject:`Турнир — место #${i+1}`,
+        body:`Награда за дневной турнир: ${g} золота.`,coins:g});
+      result.push({id,place:i+1,gold:g});
+    }
+    return {day:d,already:false,result};
+  }
+
+  antiAction(id){
+    this.init();
+    const t=Date.now(),r=this.sql.exec(
+      `SELECT * FROM anti_cheat WHERE telegram_id=?`,id).toArray()[0];
+    if(r?.banned)throw Error("Banned by anti-cheat");
+    if(r?.last_action_ms && t-r.last_action_ms<MIN_ACTION_MS){
+      const strikes=(r.strikes||0)+1,banned=strikes>=3?1:0;
+      this.sql.exec(`INSERT INTO anti_cheat
+        (telegram_id,strikes,last_action_ms,banned,updated_at) VALUES(?,?,?,?,?)
+        ON CONFLICT(telegram_id) DO UPDATE SET strikes=excluded.strikes,
+        last_action_ms=excluded.last_action_ms,banned=excluded.banned,updated_at=excluded.updated_at`,
+        id,strikes,t,banned,now());
+      if(banned){
+        this.sql.exec(`UPDATE players SET banned=1,ban_reason=? WHERE telegram_id=?`,
+          "Anti-cheat: action interval below 150ms",id);
+        throw Error("Banned by anti-cheat");
+      }
+      throw Error("Action too fast");
+    }
+    this.sql.exec(`INSERT INTO anti_cheat
+      (telegram_id,strikes,last_action_ms,banned,updated_at) VALUES(?,?,?,?,?)
+      ON CONFLICT(telegram_id) DO UPDATE SET last_action_ms=excluded.last_action_ms,
+      updated_at=excluded.updated_at`,id,0,t,0,now());
+  }
+
+  event(id,category,action,details='') {
+    this.sql.exec(`INSERT INTO player_events(telegram_id,category,action,details,created_at) VALUES(?,?,?,?,?)`,
+      id,s(category).slice(0,40),s(action).slice(0,80),s(details).slice(0,2000),now());
+  }
+
+  audit(adminId,id,action,before,after,reason='') {
+    this.sql.exec(`INSERT INTO admin_audit(admin_id,telegram_id,action,before_json,after_json,reason,created_at) VALUES(?,?,?,?,?,?,?)`,
+      s(adminId||'admin'),s(id||''),s(action).slice(0,80),JSON.stringify(before||{}),JSON.stringify(after||{}),s(reason).slice(0,500),now());
+  }
+
+  playerDetail(id) {
+    this.init();
+    const p=this.player(id);
+    if(!p) return null;
+    const inv=this.sql.exec(`SELECT i.item_id,i.quantity,COALESCE(s.name,i.item_id) name,COALESCE(s.icon,'') icon FROM inventory i LEFT JOIN shop_catalog s ON s.item_id=i.item_id WHERE i.telegram_id=? ORDER BY i.id`,id).toArray();
+    const mail=this.sql.exec(`SELECT id,subject,coins,gems,weapon_id,claimed,created_at,claimed_at FROM player_mail WHERE telegram_id=? ORDER BY id DESC LIMIT 50`,id).toArray();
+    const ledger=this.sql.exec(`SELECT currency,amount,balance_before,balance_after,kind,reference,reason,created_at FROM economy_ledger WHERE telegram_id=? ORDER BY id DESC LIMIT 100`,id).toArray();
+    const events=this.sql.exec(`SELECT category,action,details,created_at FROM player_events WHERE telegram_id=? ORDER BY id DESC LIMIT 200`,id).toArray();
+    const anti=this.sql.exec(`SELECT strikes,last_action_ms,banned,updated_at FROM anti_cheat WHERE telegram_id=?`,id).toArray()[0]||null;
+    return {player:p,inventory:inv,mail,ledger,events,anti};
+  }
+
+  playerHistory(id,category='') {
+    this.init();
+    const q=s(category).slice(0,40);
+    if(q) return this.sql.exec(`SELECT category,action,details,created_at FROM player_events WHERE telegram_id=? AND category=? ORDER BY id DESC LIMIT 300`,id,q).toArray();
+    return this.sql.exec(`SELECT category,action,details,created_at FROM player_events WHERE telegram_id=? ORDER BY id DESC LIMIT 300`,id).toArray();
+  }
+
+  adminAdjust(id,m) {
+    this.init();
+    const p=this.player(id); if(!p) throw Error('Player not found');
+    const reason=s(m.reason).trim().slice(0,500); if(!reason) throw Error('Reason is required');
+    const action=s(m.action).trim();
+    const before={coins:p.coins,gems:p.gems,level:p.level,exp:p.exp,hp:p.hp};
+    let sets=[],args=[];
+    if(action==='coins' || action==='gems' || action==='exp' || action==='level' || action==='hp') {
+      const key=action, delta=n(m.amount);
+      if(!Number.isFinite(delta) || Math.abs(delta)>1000000000) throw Error('Invalid amount');
+      if(key==='coins' || key==='gems') {
+        const old=n(p[key]); const next=Math.max(0,old+delta); sets.push(`${key}=?`); args.push(next);
+        this.sql.exec(`INSERT INTO economy_ledger(telegram_id,currency,amount,balance_before,balance_after,kind,reference,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,id,key,delta,old,next,'admin_adjust','admin',reason,now());
+      } else if(key==='level') { const next=Math.max(1,Math.min(10000,n(m.value??delta))); sets.push('level=?'); args.push(next); }
+      else if(key==='exp') { const next=Math.max(0,Math.min(1000000000,n(p.exp)+delta)); sets.push('exp=?'); args.push(next); }
+      else if(key==='hp') { const next=Math.max(0,Math.min(n(p.max_hp),n(p.hp)+delta)); sets.push('hp=?'); args.push(next); }
+    } else if(action==='energy') { throw Error('Energy is not yet in the backend schema'); }
+    else throw Error('Unknown admin action');
+    if(!sets.length) throw Error('Nothing to change');
+    sets.push('updated_at=?'); args.push(now(),id);
+    this.sql.exec(`UPDATE players SET ${sets.join(',')} WHERE telegram_id=?`,...args);
+    const after=this.player(id); this.audit(m.admin_id,id,'adjust_'+action,before,after,reason); this.event(id,'Admin','adjust_'+action,JSON.stringify({amount:m.amount,value:m.value,reason}));
+    return after;
+  }
+
+  adminGift(id,m,adminId='admin') {
+    const p=this.player(id); if(!p) throw Error('Player not found');
+    const reason=s(m.reason||'Admin gift').trim().slice(0,500); if(!reason) throw Error('Reason is required');
+    this.addMail(id,{sender:'Territory Administration',subject:s(m.subject||'Подарок от администрации').slice(0,120),body:s(m.body||reason).slice(0,2000),coins:Math.max(0,n(m.coins)),gems:Math.max(0,n(m.gems)),weapon_id:s(m.weapon_id||'').slice(0,80)});
+    this.audit(adminId,id,'send_gift',{},m,reason); this.event(id,'Mail','admin_gift',JSON.stringify({coins:m.coins,gems:m.gems,weapon_id:m.weapon_id,reason}));
+  }
+
+  adminPlayers(q='',limit=50,offset=0){
+    this.init();const x='%'+s(q).slice(0,80)+'%';
+    const lim=Math.max(1,Math.min(100,n(limit,50))), off=Math.max(0,n(offset));
+    const rows=this.sql.exec(`SELECT telegram_id AS id,username,first_name,last_name,level,coins,gems,banned,ban_reason,updated_at,created_at FROM players WHERE username LIKE ? OR first_name LIKE ? OR telegram_id LIKE ? ORDER BY updated_at DESC LIMIT ? OFFSET ?`,x,x,x,lim,off).toArray();
+    const total=this.sql.exec(`SELECT COUNT(*) total FROM players WHERE username LIKE ? OR first_name LIKE ? OR telegram_id LIKE ?`,x,x,x).toArray()[0]?.total||0;
+    return {rows,total,limit:lim,offset:off};
+  }
+
+  ban(id,b,reason,adminId='admin'){
+    this.init(); const p=this.player(id); if(!p) throw Error('Player not found');
+    const before={banned:p.banned,ban_reason:p.ban_reason}; const rr=s(reason||(b?'Admin ban':'Unbanned')).slice(0,250);
+    this.sql.exec(`UPDATE players SET banned=?,ban_reason=?,updated_at=? WHERE telegram_id=?`,b?1:0,rr,now(),id);
+    const after=this.player(id); this.audit(adminId,id,b?'ban':'unban',before,after,rr); this.event(id,'Admin',b?'ban':'unban',rr);
+  }
+
+  gift(id,m,adminId='admin'){this.adminGift(id,m,adminId);}
+
+  broadcastPreview(audience='all',minLevel=1){
+    this.init(); const ml=Math.max(1,n(minLevel,1)); let q='SELECT COUNT(*) total FROM players WHERE 1=1',args=[];
+    if(audience==='active'){q+=' AND updated_at>=?';args.push(now()-30*86400)}
+    if(audience==='level'){q+=' AND level>=?';args.push(ml)}
+    return this.sql.exec(q,...args).toArray()[0]||{total:0};
+  }
+
+  broadcastMail(m,adminId='admin'){
+    this.init();
+    const audience=['all','active','level'].includes(s(m.audience))?s(m.audience):'all';
+    const minLevel=Math.max(1,n(m.min_level,1));
+    const subject=s(m.subject).trim().slice(0,120), body=s(m.body).trim().slice(0,2000), reason=s(m.reason).trim().slice(0,500);
+    const coins=Math.max(0,n(m.coins)), gems=Math.max(0,n(m.gems)), weapon_id=s(m.weapon_id||'').trim().slice(0,80);
+    if(!subject||!body||!reason)throw Error('Subject, body and reason are required');
+    if(!coins&&!gems&&!weapon_id)throw Error('At least one reward is required');
+    if(coins>1000000000||gems>1000000000)throw Error('Reward is too large');
+    if(weapon_id && !this.sql.exec('SELECT 1 FROM shop_catalog WHERE item_id=? AND active=1',weapon_id).toArray().length)throw Error('Invalid weapon/item');
+    const broadcast_id=crypto.randomUUID();
+    let where='1=1',args=[]; if(audience==='active'){where+=' AND updated_at>=?';args.push(now()-30*86400)} if(audience==='level'){where+=' AND level>=?';args.push(minLevel)}
+    const players=this.sql.exec(`SELECT telegram_id FROM players WHERE ${where} AND banned=0`,...args).toArray();
+    const t=now();
+    this.sql.exec('BEGIN');
+    try{
+      for(const p of players){this.sql.exec(`INSERT INTO player_mail(telegram_id,sender,subject,body,coins,gems,weapon_id,claimed,created_at) VALUES(?,?,?,?,?,?,?,0,?)`,p.telegram_id,'Territory Administration',subject,body,coins,gems,weapon_id,t); this.event(p.telegram_id,'Mail','broadcast',JSON.stringify({broadcast_id,coins,gems,weapon_id,subject}));}
+      this.sql.exec(`INSERT INTO mail_broadcasts(broadcast_id,admin_id,audience,min_level,subject,body,coins,gems,weapon_id,reason,recipient_count,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,broadcast_id,s(adminId||'admin'),audience,minLevel,subject,body,coins,gems,weapon_id,reason,players.length,t);
+      this.audit(adminId,'','mass_mail',{}, {broadcast_id,recipient_count:players.length,coins,gems,weapon_id,subject,audience,min_level:minLevel},reason);
+      this.sql.exec('COMMIT');
+    }catch(e){try{this.sql.exec('ROLLBACK')}catch{};throw e}
+    return {ok:true,broadcast_id,sent:players.length};
+  }
+
+  broadcasts(){this.init();return this.sql.exec(`SELECT broadcast_id,created_at,subject,recipient_count,coins,gems,weapon_id,reason,audience,min_level FROM mail_broadcasts ORDER BY created_at DESC LIMIT 100`).toArray();}
+
+  finance(){
+    this.init();const since=now()-86400;
+    const daily=this.sql.exec(`SELECT COALESCE(SUM(amount),0) total FROM finance
+      WHERE created_at>=? AND amount>0`,since).toArray()[0]?.total||0;
+    const donors=this.sql.exec(`SELECT telegram_id id,SUM(amount) total,COUNT(*) payments
+      FROM finance WHERE amount>0 GROUP BY telegram_id ORDER BY total DESC LIMIT 20`).toArray();
+    const paymentCount=this.sql.exec(`SELECT COUNT(*) total FROM finance WHERE created_at>=? AND amount>0`,since).toArray()[0]?.total||0;
+    return {dailyIncome:daily,paymentCount,topDonors:donors};
+  }
+
+  prices(){this.init();return this.sql.exec(`SELECT item_id,name,icon,
+    price_coins price,damage,active FROM shop_catalog ORDER BY id`).toArray();}
+
+  setPrice(id,price,reason='Price change',adminId='admin'){
+    this.init(); const w=this.sql.exec(`SELECT * FROM shop_catalog WHERE item_id=?`,id).toArray()[0]; if(!w) throw Error('Item not found');
+    const next=clamp(price,0,100000000); this.sql.exec(`UPDATE shop_catalog SET price_coins=?,updated_at=? WHERE item_id=?`,next,now(),id);
+    this.audit(adminId,'','shop_price_change',{item_id:id,price:w.price_coins},{item_id:id,price:next},s(reason).slice(0,500));
+  }
+
+  antiList(){
+    this.init();return this.sql.exec(`SELECT a.telegram_id id,a.strikes,
+      a.last_action_ms,a.banned,p.username,p.first_name
+      FROM anti_cheat a LEFT JOIN players p ON p.telegram_id=a.telegram_id
+      ORDER BY a.strikes DESC,a.updated_at DESC LIMIT 200`).toArray();
+  }
+
+  recordFinance(id,kind,amount){
+    this.init();this.sql.exec(`INSERT INTO finance(telegram_id,kind,amount,created_at)
+      VALUES(?,?,?,?)`,id,s(kind).slice(0,50),n(amount),now());
+  }
+
+  async fetch(request){
+    this.init();
+    const u=new URL(request.url);
+    try{
+      const b=()=>bodyJSON(request);
+      if(u.pathname==="/db/upsert"){const x=await b();return json(this.upsert(x.user));}
+      if(u.pathname==="/db/player"){return json(this.player(u.searchParams.get("id")||""));}
+      if(u.pathname==="/db/progress"){const x=await b();return json(this.progress(x.id,x.patch||{}));}
+      if(u.pathname==="/db/shop"){return json(this.catalog());}
+      if(u.pathname==="/db/buy"){const x=await b();return json(this.buy(x.id,x.item_id));}
+      if(u.pathname==="/db/mail"){return json(this.mail(u.searchParams.get("id")||""));}
+      if(u.pathname==="/db/mail/claim"){const x=await b();return json(this.claimMail(x.id,x.mail_id));}
+      if(u.pathname==="/db/mail/add"){const x=await b();this.addMail(x.id,x);return json({ok:true});}
+      if(u.pathname==="/db/top"){return json(this.top100());}
+      if(u.pathname==="/db/profile"){return json(this.profile(u.searchParams.get("id")||""));}
+      if(u.pathname==="/db/score"){const x=await b();this.score(x.id,x.delta);return json({ok:true});}
+      if(u.pathname==="/db/tournament"){const x=await b();return json(this.tournament(x.day));}
+      if(u.pathname==="/db/anticheat/action"){const x=await b();this.antiAction(x.id);return json({ok:true});}
+      if(u.pathname==="/db/players"){return json(this.adminPlayers(u.searchParams.get("q")||"",u.searchParams.get("limit")||50,u.searchParams.get("offset")||0));}
+      if(u.pathname==="/db/player-detail"){return json(this.playerDetail(u.searchParams.get("id")||""));}
+      if(u.pathname==="/db/player-history"){return json(this.playerHistory(u.searchParams.get("id")||"",u.searchParams.get("category")||""));}
+      if(u.pathname==="/db/ban"){const x=await b();this.ban(x.id,x.banned,x.reason,x.admin_id||'admin');return json({ok:true});}
+      if(u.pathname==="/db/gift"){const x=await b();this.gift(x.id,x,x.admin_id||'admin');return json({ok:true});}
+      if(u.pathname==="/db/adjust"){const x=await b();return json({ok:true,player:this.adminAdjust(x.id,x)});}
+      if(u.pathname==="/db/finance"){return json(this.finance());}
+      if(u.pathname==="/db/prices"){return json(this.prices());}
+      if(u.pathname==="/db/price"){const x=await b();this.setPrice(x.item_id,x.price,x.reason||'Shop price change',x.admin_id||'admin');return json({ok:true});}
+      if(u.pathname==="/db/logs"){return json(this.sql.exec(`SELECT * FROM admin_audit ORDER BY id DESC LIMIT 300`).toArray());}
+      if(u.pathname==="/db/broadcast-preview"){return json(this.broadcastPreview(u.searchParams.get("audience")||"all",u.searchParams.get("min_level")||1));}
+      if(u.pathname==="/db/broadcasts"){return json(this.broadcasts());}
+      if(u.pathname==="/db/broadcast"){const x=await b();return json(this.broadcastMail(x,x.admin_id||"admin"));}
+      if(u.pathname==="/db/anti"){return json(this.antiList());}
+      return json({error:"Not found"},404);
+    }catch(e){return json({error:e?.message||"Database error"},400);}
+  }
+}
+
+export default {
+  async fetch(request,env,ctx){
+    const u=new URL(request.url);
+    const stub=env.DB.get(env.DB.idFromName("global"));
+
+    try{
+      if(u.pathname==="/admin" && request.method==="GET") return page(adminHTML());
+
+      if(u.pathname==="/admin/login" && request.method==="POST"){
+        const x=await bodyJSON(request),pw=s(env.ADMIN_PASSWORD);
+        if(!pw)return json({error:"ADMIN_PASSWORD is not configured"},500);
+        if(!equal(s(x.password),pw))return json({error:"Invalid password"},401);
+        const token=await signedAdminToken(pw);
+        return json({ok:true},200,{ "set-cookie":
+          `${ADMIN_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800`
+        });
+      }
+
+      if(u.pathname.startsWith("/admin/api/")){
+        const ok=await verifyAdminToken(cookies(request)[ADMIN_COOKIE],s(env.ADMIN_PASSWORD));
+        if(!ok)return json({error:"Unauthorized"},401);
+        if(u.pathname==="/admin/api/players")return dbJSON(stub,"/db/players?q="+encodeURIComponent(u.searchParams.get("q")||"")+"&limit=50&offset="+(u.searchParams.get("offset")||0));
+        if(u.pathname.startsWith("/admin/api/player/") && u.pathname.endsWith("/history")){const id=decodeURIComponent(u.pathname.slice("/admin/api/player/".length,-8));return dbJSON(stub,"/db/player-history?id="+encodeURIComponent(id)+"&category="+encodeURIComponent(u.searchParams.get("category")||""));}
+        if(u.pathname.startsWith("/admin/api/player/")){const id=decodeURIComponent(u.pathname.slice("/admin/api/player/".length));return dbJSON(stub,"/db/player-detail?id="+encodeURIComponent(id));}
+        if(u.pathname==="/admin/api/finance")return dbJSON(stub,"/db/finance");
+        if(u.pathname==="/admin/api/prices")return dbJSON(stub,"/db/prices");
+        if(u.pathname==="/admin/api/anticheat")return dbJSON(stub,"/db/anti");
+        if(u.pathname==="/admin/api/ban")return dbJSON(stub,"/db/ban","POST",await bodyJSON(request));
+        if(u.pathname==="/admin/api/gift")return dbJSON(stub,"/db/gift","POST",await bodyJSON(request));
+        if(u.pathname==="/admin/api/adjust")return dbJSON(stub,"/db/adjust","POST",await bodyJSON(request));
+        if(u.pathname==="/admin/api/price")return dbJSON(stub,"/db/price","POST",await bodyJSON(request));
+        if(u.pathname==="/admin/api/logs")return dbJSON(stub,"/db/logs");
+        if(u.pathname==="/admin/api/broadcast/preview")return dbJSON(stub,"/db/broadcast-preview?audience="+encodeURIComponent(u.searchParams.get("audience")||"all")+"&min_level="+encodeURIComponent(u.searchParams.get("min_level")||1));
+        if(u.pathname==="/admin/api/broadcasts")return dbJSON(stub,"/db/broadcasts");
+        if(u.pathname==="/admin/api/broadcast" && request.method==="POST")return dbJSON(stub,"/db/broadcast","POST",await bodyJSON(request));
+        return json({error:"Not found"},404);
+      }
+
+      const p=await playerFromTelegram(request,env,stub);
+      const id=p.telegram_id;
+
+      if(u.pathname==="/api/auth") return json({
+        ok:true,player:{
+          id,username:p.username,first_name:p.first_name,level:p.level,exp:p.exp,
+          hp:p.hp,maxHp:p.max_hp,coins:p.coins,gems:p.gems,weapon:p.weapon
+        }
+      });
+
+      if(u.pathname==="/api/me")return json({player:p});
+
+      if(u.pathname==="/api/progress" && request.method==="POST"){
+        const x=await bodyJSON(request),patch={};
+        for(const k of ["level","exp","hp","max_hp","coins","gems","strength","agility","defense","weapon"])
+          if(x[k]!==undefined)patch[k]=x[k];
+        // For production, client-supplied currency should be replaced by authoritative
+        // game events. This endpoint is kept for progress synchronization.
+        return json(await dbJSON(stub,"/db/progress","POST",{id,patch}));
+      }
+
+      if(u.pathname==="/api/shop")return json(await dbJSON(stub,"/db/shop"));
+      if(u.pathname==="/api/shop/buy" && request.method==="POST"){
+        const x=await bodyJSON(request);
+        return json(await dbJSON(stub,"/db/buy","POST",{id,item_id:x.item_id}));
+      }
+
+      if(u.pathname==="/api/mail")return json(await dbJSON(stub,"/db/mail?id="+encodeURIComponent(id)));
+      if(u.pathname==="/api/mail/claim" && request.method==="POST"){
+        const x=await bodyJSON(request);
+        return json(await dbJSON(stub,"/db/mail/claim","POST",{id,mail_id:x.mail_id}));
+      }
+
+      if(u.pathname==="/api/arena/top")return json(await dbJSON(stub,"/db/top"));
+      if(u.pathname.startsWith("/api/profile/")){
+        const target=decodeURIComponent(u.pathname.slice("/api/profile/".length));
+        const profile=await dbJSON(stub,"/db/profile?id="+encodeURIComponent(target));
+        // profile SQL intentionally has no coins/gems columns.
+        return json(profile);
+      }
+
+      if(u.pathname==="/api/arena/action" && request.method==="POST"){
+        await dbJSON(stub,"/db/anticheat/action","POST",{id});
+        return json({ok:true});
+      }
+
+      if(u.pathname==="/api/arena/event" && request.method==="POST"){
+        // The score is recorded only after the anti-cheat gate.
+        await dbJSON(stub,"/db/anticheat/action","POST",{id});
+        const x=await bodyJSON(request);
+        // Server accepts only a bounded score delta; reward/balance changes are never
+        // accepted from this endpoint.
+        await dbJSON(stub,"/db/score","POST",{id,delta:clamp(x.score_delta,0,10000)});
+        return json({ok:true});
+      }
+
+      return json({error:"Not found"},404);
+    }catch(e){
+      if(e instanceof Response)return e;
+      return json({error:e?.message||"Server error"},400);
+    }
+  },
+
+  async scheduled(event,env,ctx){
+    const stub=env.DB.get(env.DB.idFromName("global"));
+    // Runs at 03:00 UTC with cron "0 3 * * *".
+    const previous=day(Date.now()-86400000);
+    ctx.waitUntil(dbJSON(stub,"/db/tournament","POST",{day:previous}));
+  }
+};
