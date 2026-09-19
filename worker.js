@@ -1,11 +1,17 @@
-import { DurableObject } from "cloudflare:workers";
-
 /**
- * Territory G90 — Cloudflare Worker + Durable Object SQLite backend
+ * Territory G91 — Cloudflare Worker + Durable Object SQLite backend
  *
  * Required:
- *   BOT_TOKEN       Telegram bot token (Worker secret)
- *   ADMIN_PASSWORD  admin password (Worker secret)
+ *   BOT_TOKEN          Telegram bot token (Worker secret)
+ *   ADMIN_PASSWORD     owner password (Worker secret)
+ *
+ * Optional:
+ *   ADMIN_LOGIN        owner login (defaults to "owner")
+ *   MODERATOR_LOGIN    moderator login
+ *   MODERATOR_PASSWORD moderator password
+ *
+ * Moderator role is intentionally unconfigured until its Cloudflare secrets
+ * are added. Owner uses the existing ADMIN_PASSWORD secret.
  *
  * Durable Object binding:
  *   DB -> TerritoryDB
@@ -109,19 +115,75 @@ async function telegramAuth(initData, botToken) {
   return {user, authDate};
 }
 
-async function signedAdminToken(password) {
-  const body = `${now()}.${crypto.randomUUID()}`;
-  const sig = hex(await hmac(password, body));
+const ADMIN_ROLE_LABELS = {
+  owner: "Владелец",
+  moderator: "Модератор"
+};
+
+const ADMIN_ROLE_PERMS = {
+  owner: ["players","finance","prices","anti","logs","broadcast","gift","adjust","ban"],
+  moderator: ["players","anti","logs","ban"]
+};
+
+function adminSecretForRole(env, role) {
+  if (role === "owner") return {
+    login: s(env.ADMIN_LOGIN || "owner"),
+    password: s(env.ADMIN_PASSWORD)
+  };
+  if (role === "moderator") return {
+    login: s(env.MODERATOR_LOGIN),
+    password: s(env.MODERATOR_PASSWORD)
+  };
+  return {login:"",password:""};
+}
+
+function b64url(value) {
+  const bytes = new TextEncoder().encode(value);
+  let raw = "";
+  for (const b of bytes) raw += String.fromCharCode(b);
+  return btoa(raw).replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"");
+}
+
+function fromB64url(value) {
+  const raw = atob(String(value).replace(/-/g,"+").replace(/_/g,"/") + "===".slice((String(value).length + 3) % 4));
+  const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+async function signedAdminToken(secret, role, login) {
+  const body = `${role}.${b64url(login)}.${now()}.${crypto.randomUUID()}`;
+  const sig = hex(await hmac(secret, body));
   return `${body}.${sig}`;
 }
 
-async function verifyAdminToken(token, password) {
-  if (!token || !password) return false;
-  const [body, sig] = token.split(".");
-  if (!body || !sig) return false;
-  if (!equal(hex(await hmac(password,body)),sig)) return false;
-  const issued = n(body.split(".")[0]);
-  return issued > 0 && now()-issued <= 8*60*60;
+async function verifyAdminToken(token, env) {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 5) return null;
+  const [role, encodedLogin, issuedRaw, nonce, sig] = parts;
+  if (!ADMIN_ROLE_PERMS[role]) return null;
+  const issued = n(issuedRaw);
+  if (!issued || issued > now() + 60 || now() - issued > 8*60*60) return null;
+
+  let login = "";
+  try { login = fromB64url(encodedLogin); } catch { return null; }
+
+  const cfg = adminSecretForRole(env, role);
+  if (!cfg.password || !cfg.login || !equal(login,cfg.login)) return null;
+
+  const expected = hex(await hmac(cfg.password,parts.slice(0,4).join(".")));
+  if (!equal(expected,sig)) return null;
+
+  return {
+    role,
+    login,
+    permissions: ADMIN_ROLE_PERMS[role],
+    label: ADMIN_ROLE_LABELS[role]
+  };
+}
+
+function adminCan(auth, permission) {
+  return !!auth && auth.permissions.includes(permission);
 }
 
 async function bodyJSON(request) {
@@ -165,18 +227,44 @@ async function playerFromTelegram(request, env, stub) {
 }
 
 function adminHTML() {
-return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Territory Admin G90.2</title>
+return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Territory Admin G91</title>
 <style>body{margin:0;background:#0a1016;color:#edf4f7;font-family:system-ui,-apple-system,sans-serif}header{padding:15px;background:#111b24;position:sticky;top:0;z-index:3;border-bottom:1px solid #263642}main{max-width:1180px;margin:auto;padding:14px}.tabs{display:flex;gap:7px;overflow:auto;margin-bottom:12px}button,input,select,textarea{font:inherit}button{padding:9px 12px;border:1px solid #3b4d59;border-radius:9px;background:#182630;color:#fff;cursor:pointer}button:hover{background:#243640}.danger{background:#632522}.good{background:#24502e}.muted{color:#91a2ab;font-size:12px}.panel{display:none}.panel.active{display:block}.card{background:#111b23;border:1px solid #273742;border-radius:12px;padding:13px;margin:9px 0}.row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:9px}input,select,textarea{box-sizing:border-box;width:100%;padding:9px;background:#0d151c;border:1px solid #394b56;border-radius:8px;color:#fff}table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid #26343d;text-align:left;font-size:13px;vertical-align:top}.click{cursor:pointer}.click:hover{background:#17242c}.pill{display:inline-block;padding:3px 7px;border-radius:999px;background:#24343e;font-size:11px}.modal{position:fixed;inset:0;background:#000b;display:none;align-items:flex-start;justify-content:center;padding:20px;overflow:auto;z-index:10}.modal.show{display:flex}.modalbox{width:min(1050px,100%);background:#101a22;border:1px solid #334752;border-radius:14px;padding:14px}.actions button{margin:3px}.history{max-height:380px;overflow:auto}.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px}.kv div{background:#0c141a;padding:8px;border-radius:8px}.small{font-size:12px}.dangerText{color:#ff8f86}</style></head><body>
-<header><b>⚔️ Territory · G90.2 Admin</b><span id="status" class="muted"></span></header><main>
-<div id="login" class="card"><h2>Вход администратора</h2><input id="pw" type="password" placeholder="Пароль"><br><br><button onclick="login()">Войти</button><span id="msg" class="dangerText"></span></div>
-<div id="app" style="display:none"><div class="tabs"><button onclick="tab('players')">Игроки</button><button onclick="tab('finance')">Финансы</button><button onclick="tab('prices')">Магазин</button><button onclick="tab('anti')">Античит</button><button onclick="tab('logs')">Логи</button><button onclick="tab('broadcast')">🎁 Всем</button></div>
+<header><b>⚔️ Territory · G91 Admin</b><span id="status" class="muted"></span></header><main>
+<div id="login" class="card"><h2>Вход в панель</h2><div class="grid">
+<div class="card"><h3>👑 Владелец</h3><p class="muted">Полный доступ. Используется текущий секрет ADMIN_PASSWORD.</p>
+<input id="ownerLogin" value="owner" placeholder="Логин владельца"><br><br>
+<input id="ownerPw" type="password" placeholder="Пароль владельца"><br><br>
+<button onclick="login('owner')">Войти как владелец</button></div>
+<div class="card"><h3>🛡️ Модератор</h3><p class="muted">Роль подготовлена, но пароль в Cloudflare пока не настроен.</p>
+<input id="modLogin" placeholder="Логин модератора"><br><br>
+<input id="modPw" type="password" placeholder="Пароль модератора"><br><br>
+<button onclick="login('moderator')">Войти как модератор</button></div>
+</div><span id="msg" class="dangerText"></span></div>
+<div id="app" style="display:none"><div class="tabs">
+<button data-perm="players" onclick="tab('players')">Игроки</button>
+<button data-perm="finance" onclick="tab('finance')">Финансы</button>
+<button data-perm="prices" onclick="tab('prices')">Магазин</button>
+<button data-perm="anti" onclick="tab('anti')">Античит</button>
+<button data-perm="logs" onclick="tab('logs')">Логи</button>
+<button data-perm="broadcast" onclick="tab('broadcast')">🎁 Всем</button>
+</div>
 <section id="players" class="panel active"><div class="card"><div class="row"><div style="flex:1;min-width:220px"><input id="q" placeholder="Telegram ID / username / имя" onkeydown="if(event.key==='Enter')loadPlayers()"></div><button onclick="loadPlayers()">Поиск</button><button onclick="openById()">Открыть ID</button></div></div><div id="pb"></div></section>
 <section id="finance" class="panel"><div id="fb"></div></section><section id="broadcast" class="panel"><div class="card"><h2>🎁 Массовый подарок</h2><p class="muted">Отправляет подарок через игровую почту. Баланс игроков напрямую не изменяется.</p><div class="grid"><div><label>Кому</label><select id="bcAudience"><option value="all">Всем игрокам</option><option value="active">Активным игрокам (30 дней)</option><option value="level">По уровню</option></select></div><div id="bcLevelBox" style="display:none"><label>Минимальный уровень</label><input id="bcMinLevel" type="number" min="1" value="1"></div><div><label>Тема</label><input id="bcSubject" value="🎉 Подарок от Territory"></div><div><label>Монеты</label><input id="bcCoins" type="number" min="0" value="1000"></div><div><label>Кристаллы</label><input id="bcGems" type="number" min="0" value="0"></div><div><label>ID оружия/предмета (необязательно)</label><input id="bcWeapon" placeholder="например weapon_01"></div></div><br><label>Текст письма</label><textarea id="bcBody" rows="5">🎉 Поздравляем с праздником! Это подарок от команды Territory.</textarea><br><br><label>Причина/название рассылки</label><input id="bcReason" value="Праздничная рассылка"><br><br><button class="good" onclick="sendBroadcast()">📨 Отправить подарок</button><div id="bcResult" class="muted"></div></div><div id="bchistory"></div></section><section id="prices" class="panel"><div id="prb"></div></section><section id="anti" class="panel"><div id="ab"></div></section><section id="logs" class="panel"><div id="lb"></div></section></div></main>
 <div id="modal" class="modal"><div class="modalbox"><div class="row"><h2 id="mt" style="flex:1">Игрок</h2><button onclick="closeModal()">Закрыть</button></div><div id="mb"></div></div></div>
 <script>
 const $=x=>document.getElementById(x);const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(u,o={}){let r=await fetch(u,{...o,headers:{'content-type':'application/json',...(o.headers||{})}});let d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||r.statusText);return d}
-async function login(){try{await api('/admin/login',{method:'POST',body:JSON.stringify({password:$('pw').value})});$('login').style.display='none';$('app').style.display='block';loadPlayers();}catch(e){$('msg').textContent=' '+e.message}}
+async function login(role){
+  try{
+    const loginValue=role==='owner'?$('ownerLogin').value.trim():$('modLogin').value.trim();
+    const password=role==='owner'?$('ownerPw').value:$('modPw').value;
+    const d=await api('/admin/login',{method:'POST',body:JSON.stringify({role,login:loginValue,password})});
+    document.querySelectorAll('[data-perm]').forEach(el=>el.style.display=d.permissions.includes(el.dataset.perm)?'':'none');
+    $('login').style.display='none';$('app').style.display='block';
+    $('status').textContent=' · '+d.label+': '+d.login;
+    loadPlayers();
+  }catch(e){$('msg').textContent=' '+e.message}
+}
 function tab(id){document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));$(id).classList.add('active');({players:loadPlayers,finance,prices,anti,logs,broadcast}[id])()}
 function openById(){const id=$('q').value.trim();if(id)openPlayer(id)}
 async function loadPlayers(offset=0){try{const d=await api('/admin/api/players?q='+encodeURIComponent($('q').value)+'&offset='+offset);let h='<div class="card"><span class="muted">Найдено: '+d.total+'</span></div><div class="card"><table><tr><th>Telegram ID</th><th>Игрок</th><th>Ур.</th><th>Монеты</th><th>Кристаллы</th><th>Статус</th><th></th></tr>';for(const p of d.rows){h+='<tr class="click" onclick="openPlayer(\\''+esc(p.id)+'\\')"><td>'+esc(p.id)+'</td><td>'+esc(p.first_name||p.username||'')+'<br><span class="muted">@'+esc(p.username)+'</span></td><td>'+p.level+'</td><td>'+p.coins+'</td><td>'+p.gems+'</td><td>'+(p.banned?'<span class="pill dangerText">BAN</span>':'<span class="pill">OK</span>')+'</td><td><button onclick="event.stopPropagation();openPlayer(\\''+esc(p.id)+'\\')">Открыть</button></td></tr>'}h+='</table></div>';h+='<div class="row">';if(d.offset>0)h+='<button onclick="loadPlayers('+Math.max(0,d.offset-d.limit)+')">← Назад</button>';if(d.offset+d.limit<d.total)h+='<button onclick="loadPlayers('+(d.offset+d.limit)+')">Далее →</button>';h+='</div>';$('pb').innerHTML=h}catch(e){$('pb').innerHTML='<div class="card dangerText">'+esc(e.message)+'</div>'}}
@@ -213,12 +301,6 @@ async function anti(){const d=await api('/admin/api/anticheat');$('ab').innerHTM
 async function logs(){const d=await api('/admin/api/logs');$('lb').innerHTML='<div class="card"><table><tr><th>Время</th><th>Игрок</th><th>Действие</th><th>Причина</th></tr>'+d.map(x=>'<tr><td>'+new Date(x.created_at*1000).toLocaleString()+'</td><td>'+esc(x.telegram_id)+'</td><td>'+esc(x.action)+'</td><td>'+esc(x.reason)+'</td></tr>').join('')+'</table></div>'}
 </script></body></html>`}
 
-
-// Compatibility exports for Durable Object namespaces created by older server versions.
-// Keep these classes exported so existing GameHub/PresenceHub/RoomHub namespaces remain valid.
-export class GameHub extends DurableObject {}
-export class PresenceHub extends DurableObject {}
-export class RoomHub extends DurableObject {}
 
 export class TerritoryDB {
   constructor(ctx, env) {
@@ -650,35 +732,107 @@ export default {
       if(u.pathname==="/admin" && request.method==="GET") return page(adminHTML());
 
       if(u.pathname==="/admin/login" && request.method==="POST"){
-        const x=await bodyJSON(request),pw=s(env.ADMIN_PASSWORD);
-        if(!pw)return json({error:"ADMIN_PASSWORD is not configured"},500);
-        if(!equal(s(x.password),pw))return json({error:"Invalid password"},401);
-        const token=await signedAdminToken(pw);
-        return json({ok:true},200,{ "set-cookie":
+        const x=await bodyJSON(request),role=s(x.role).toLowerCase();
+        if(!ADMIN_ROLE_PERMS[role])return json({error:"Unknown role"},400);
+        const cfg=adminSecretForRole(env,role);
+        if(!cfg.password||!cfg.login)return json({error:"Эта роль пока не настроена в Cloudflare"},503);
+        if(!equal(s(x.login),cfg.login)||!equal(s(x.password),cfg.password))return json({error:"Неверный логин или пароль"},401);
+        const token=await signedAdminToken(cfg.password,role,cfg.login);
+        return json({ok:true,role,label:ADMIN_ROLE_LABELS[role],login:cfg.login,permissions:ADMIN_ROLE_PERMS[role]},200,{"set-cookie":
           `${ADMIN_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800`
         });
       }
 
       if(u.pathname.startsWith("/admin/api/")){
-        const ok=await verifyAdminToken(cookies(request)[ADMIN_COOKIE],s(env.ADMIN_PASSWORD));
-        if(!ok)return json({error:"Unauthorized"},401);
-        if(u.pathname==="/admin/api/players")return dbJSON(stub,"/db/players?q="+encodeURIComponent(u.searchParams.get("q")||"")+"&limit=50&offset="+(u.searchParams.get("offset")||0));
-        if(u.pathname.startsWith("/admin/api/player/") && u.pathname.endsWith("/history")){const id=decodeURIComponent(u.pathname.slice("/admin/api/player/".length,-8));return dbJSON(stub,"/db/player-history?id="+encodeURIComponent(id)+"&category="+encodeURIComponent(u.searchParams.get("category")||""));}
-        if(u.pathname.startsWith("/admin/api/player/")){const id=decodeURIComponent(u.pathname.slice("/admin/api/player/".length));return dbJSON(stub,"/db/player-detail?id="+encodeURIComponent(id));}
-        if(u.pathname==="/admin/api/finance")return dbJSON(stub,"/db/finance");
-        if(u.pathname==="/admin/api/prices")return dbJSON(stub,"/db/prices");
-        if(u.pathname==="/admin/api/anticheat")return dbJSON(stub,"/db/anti");
-        if(u.pathname==="/admin/api/ban")return dbJSON(stub,"/db/ban","POST",await bodyJSON(request));
-        if(u.pathname==="/admin/api/gift")return dbJSON(stub,"/db/gift","POST",await bodyJSON(request));
-        if(u.pathname==="/admin/api/adjust")return dbJSON(stub,"/db/adjust","POST",await bodyJSON(request));
-        if(u.pathname==="/admin/api/price")return dbJSON(stub,"/db/price","POST",await bodyJSON(request));
-        if(u.pathname==="/admin/api/logs")return dbJSON(stub,"/db/logs");
-        if(u.pathname==="/admin/api/broadcast/preview")return dbJSON(stub,"/db/broadcast-preview?audience="+encodeURIComponent(u.searchParams.get("audience")||"all")+"&min_level="+encodeURIComponent(u.searchParams.get("min_level")||1));
-        if(u.pathname==="/admin/api/broadcasts")return dbJSON(stub,"/db/broadcasts");
-        if(u.pathname==="/admin/api/broadcast" && request.method==="POST")return dbJSON(stub,"/db/broadcast","POST",await bodyJSON(request));
+        const auth=await verifyAdminToken(cookies(request)[ADMIN_COOKIE],env);
+        if(!auth)return json({error:"Unauthorized"},401);
+
+        const requirePerm=(perm)=>{
+          if(!adminCan(auth,perm)) throw new Response(
+            JSON.stringify({error:"Недостаточно прав"}),
+            {status:403,headers:{"content-type":"application/json"}}
+          );
+        };
+
+        if(u.pathname==="/admin/api/players"){
+          requirePerm("players");
+          return dbJSON(stub,"/db/players?q="+encodeURIComponent(u.searchParams.get("q")||"")+"&limit=50&offset="+(u.searchParams.get("offset")||0));
+        }
+
+        if(u.pathname.startsWith("/admin/api/player/") && u.pathname.endsWith("/history")){
+          requirePerm("players");
+          const id=decodeURIComponent(u.pathname.slice("/admin/api/player/".length,-8));
+          return dbJSON(stub,"/db/player-history?id="+encodeURIComponent(id)+"&category="+encodeURIComponent(u.searchParams.get("category")||""));
+        }
+
+        if(u.pathname.startsWith("/admin/api/player/")){
+          requirePerm("players");
+          const id=decodeURIComponent(u.pathname.slice("/admin/api/player/".length));
+          return dbJSON(stub,"/db/player-detail?id="+encodeURIComponent(id));
+        }
+
+        if(u.pathname==="/admin/api/finance"){
+          requirePerm("finance");
+          return dbJSON(stub,"/db/finance");
+        }
+
+        if(u.pathname==="/admin/api/prices"){
+          requirePerm("prices");
+          return dbJSON(stub,"/db/prices");
+        }
+
+        if(u.pathname==="/admin/api/anticheat"){
+          requirePerm("anti");
+          return dbJSON(stub,"/db/anti");
+        }
+
+        if(u.pathname==="/admin/api/ban"){
+          requirePerm("ban");
+          const x=await bodyJSON(request); x.admin_id=auth.login;
+          return dbJSON(stub,"/db/ban","POST",x);
+        }
+
+        if(u.pathname==="/admin/api/gift"){
+          requirePerm("gift");
+          const x=await bodyJSON(request); x.admin_id=auth.login;
+          return dbJSON(stub,"/db/gift","POST",x);
+        }
+
+        if(u.pathname==="/admin/api/adjust"){
+          requirePerm("adjust");
+          const x=await bodyJSON(request); x.admin_id=auth.login;
+          return dbJSON(stub,"/db/adjust","POST",x);
+        }
+
+        if(u.pathname==="/admin/api/price"){
+          requirePerm("prices");
+          const x=await bodyJSON(request); x.admin_id=auth.login;
+          return dbJSON(stub,"/db/price","POST",x);
+        }
+
+        if(u.pathname==="/admin/api/logs"){
+          requirePerm("logs");
+          return dbJSON(stub,"/db/logs");
+        }
+
+        if(u.pathname==="/admin/api/broadcast/preview"){
+          requirePerm("broadcast");
+          return dbJSON(stub,"/db/broadcast-preview?audience="+encodeURIComponent(u.searchParams.get("audience")||"all")+"&min_level="+encodeURIComponent(u.searchParams.get("min_level")||1));
+        }
+
+        if(u.pathname==="/admin/api/broadcasts"){
+          requirePerm("broadcast");
+          return dbJSON(stub,"/db/broadcasts");
+        }
+
+        if(u.pathname==="/admin/api/broadcast" && request.method==="POST"){
+          requirePerm("broadcast");
+          const x=await bodyJSON(request); x.admin_id=auth.login;
+          return dbJSON(stub,"/db/broadcast","POST",x);
+        }
+
         return json({error:"Not found"},404);
       }
-
       const p=await playerFromTelegram(request,env,stub);
       const id=p.telegram_id;
 
