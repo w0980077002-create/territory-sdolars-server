@@ -1,224 +1,40 @@
 import { DurableObject } from "cloudflare:workers";
 
-const MAX_AUTH_AGE_SECONDS = 24 * 60 * 60;
-const MAX_STATE_BYTES = 64 * 1024;
-const BOT_USERNAME = "TeritoryGameBot";
-
-const DEFAULT_STATE = {
-  coins: 1000, gems: 25, energy: 200, combatStone: 0,
-  hp: 120, maxHp: 120, level: 1, exp: 0, maxExp: 100,
-  weapon: "Кулаки", bonusDamage: 0, strength: 5, agility: 5,
-  defense: 0, freePoints: 0, inventory: ["🪓"], alexQuest: 0,
-  cityRep: 0, wins: 0, losses: 0, battles: 0
-};
-
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: {
-    "content-type": "application/json; charset=UTF-8", "cache-control": "no-store",
-    "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "Content-Type"
-  }});
-}
-function hex(buffer) { return [...new Uint8Array(buffer)].map(b => b.toString(16).padStart(2, "0")).join(""); }
-function timingSafeEqual(a,b) { if(a.length!==b.length)return false; let d=0; for(let i=0;i<a.length;i++)d|=a.charCodeAt(i)^b.charCodeAt(i); return d===0; }
-async function hmacHex(keyBytes,message){
-  const key=await crypto.subtle.importKey("raw",keyBytes,{name:"HMAC",hash:"SHA-256"},false,["sign"]);
-  return hex(await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(message)));
-}
-async function validateTelegramInitData(initData,botToken){
-  if(!botToken||typeof initData!=="string"||!initData)return{ok:false,error:"Telegram auth is not configured"};
-  let params; try{params=new URLSearchParams(initData)}catch{return{ok:false,error:"Invalid initData"};}
-  const receivedHash=params.get("hash"); if(!receivedHash)return{ok:false,error:"Missing Telegram hash"};
-  const authDate=Number(params.get("auth_date")); if(!Number.isFinite(authDate))return{ok:false,error:"Missing auth_date"};
-  const age=Math.floor(Date.now()/1000)-authDate;
-  if(age<-60||age>MAX_AUTH_AGE_SECONDS)return{ok:false,error:"Telegram auth data is expired"};
-  const dataCheckString=[...params.entries()].filter(([k])=>k!=="hash").sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>`${k}=${v}`).join("\n");
-  const tokenKey=await crypto.subtle.importKey("raw",new TextEncoder().encode(botToken),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
-  const secretKey=await crypto.subtle.sign("HMAC",tokenKey,new TextEncoder().encode("WebAppData"));
-  const calculatedHash=await hmacHex(new Uint8Array(secretKey),dataCheckString);
-  if(!timingSafeEqual(calculatedHash,receivedHash.toLowerCase()))return{ok:false,error:"Invalid Telegram signature"};
-  let user; try{user=JSON.parse(params.get("user")||"null")}catch{return{ok:false,error:"Invalid Telegram user data"};}
-  if(!user||!Number.isSafeInteger(user.id))return{ok:false,error:"Telegram user is missing"};
-  return{ok:true,user};
-}
-function displayName(user){const full=[user.first_name,user.last_name].filter(Boolean).join(" ").trim();return full|| (user.username?`@${user.username}`:"Territory");}
-function cloneDefaultState(){return JSON.parse(JSON.stringify(DEFAULT_STATE));}
-function normalizeState(input){
-  const state=cloneDefaultState(); if(!input||typeof input!=="object")return state;
-  const numeric=["coins","gems","energy","combatStone","hp","maxHp","level","exp","maxExp","bonusDamage","strength","agility","defense","freePoints","alexQuest","cityRep","merchantRep","marketDay","wins","losses","battles","gameDice","gameRolls","gameSteps","gameEventVersion","gameTaskProgress","gameGiftDate","gameEndsAt","gameSaveVersion"];
-  for(const key of numeric)if(Number.isFinite(Number(input[key])))state[key]=Number(input[key]);
-  if(typeof input.weapon==="string"&&input.weapon.length<=80)state.weapon=input.weapon;
-  if(Array.isArray(input.inventory))state.inventory=input.inventory.filter(x=>typeof x==="string").slice(0,200);
-  for(const key of ["gameMilestones","gameTaskClaims","gamePanelClaims","gameJackpotClaims"])if(Array.isArray(input[key]))state[key]=input[key].slice(0,500);
-  if(typeof input.gameGiftDate==="string"&&input.gameGiftDate.length<=32)state.gameGiftDate=input.gameGiftDate;
-  return state;
-}
-async function telegramApi(method,body,botToken){
-  const r=await fetch(`https://api.telegram.org/bot${botToken}/${method}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
-  let d;try{d=await r.json()}catch{return{ok:false,error:`Telegram API HTTP ${r.status}`}} return d;
-}
-async function handleTelegramUpdate(update,env){
-  const message=update?.message, text=typeof message?.text==="string"?message.text.trim():"", chatId=message?.chat?.id;
-  if(chatId==null||!text)return; const command=text.split(/\s+/)[0].split("@")[0].toLowerCase();
-  if(command!=="/start"&&command!=="/game")return;
-  await telegramApi("sendMessage",{chat_id:chatId,text:"🏰 Territory — Sdolars\n\nДобро пожаловать! Открой игру и продолжай свой путь.",reply_markup:{inline_keyboard:[[{text:"🎮 ИГРАТЬ",url:`https://t.me/${BOT_USERNAME}?startapp`}]]}},env.TELEGRAM_BOT_TOKEN);
-}
-
-
-const ACTIONS = Object.freeze({
-  DAILY_CLAIM: "daily_claim",
-  SHOP_BUY: "shop_buy"
-});
-const MAX_ACTION_LOG = 100;
-const PROTECTED_FIELDS = ["coins", "gems", "combatStone", "inventory"];
-
-const SHOP = Object.freeze({
-  axe:    { price: 150, currency: "coins", item: "🪓", name: "Топор", bonusDamage: 8, slot: "weapon" },
-  sword:  { price: 350, currency: "coins", item: "⚔️", name: "Меч", bonusDamage: 15, slot: "weapon" },
-  helmet: { price: 250, currency: "coins", item: "🪖", name: "Шлем", defense: 4, slot: "helmet" },
-  armor:  { price: 500, currency: "coins", item: "🛡️", name: "Броня", defense: 10, slot: "armor" },
-  gloves: { price: 180, currency: "coins", item: "🥊", name: "Перчатки", defense: 3, slot: "gloves" },
-  boots:  { price: 220, currency: "coins", item: "🥾", name: "Сапоги", defense: 3, slot: "boots" }
-});
-
-function utcDay(){ return new Date().toISOString().slice(0,10); }
-function result(ok, extra={}){ return { ok, ...extra }; }
-
-export class GameHub extends DurableObject {
-  constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;this.ctx.blockConcurrencyWhile(async()=>{this.ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS player (player_id TEXT PRIMARY KEY,name TEXT NOT NULL,username TEXT,photo_url TEXT,state_json TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS action_log (action_id TEXT PRIMARY KEY, player_id TEXT NOT NULL, action TEXT NOT NULL, response_json TEXT NOT NULL, created_at INTEGER NOT NULL)`);});}
-  getPlayer(){return this.ctx.storage.sql.exec(`SELECT player_id,name,username,photo_url,state_json,created_at,updated_at FROM player LIMIT 1`).one();}
-  savePlayer(p){this.ctx.storage.sql.exec(`INSERT INTO player (player_id,name,username,photo_url,state_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(player_id) DO UPDATE SET name=excluded.name,username=excluded.username,photo_url=excluded.photo_url,state_json=excluded.state_json,updated_at=excluded.updated_at`,p.playerId,p.name,p.username||null,p.photoUrl||null,JSON.stringify(p.state),p.createdAt,p.updatedAt);}
-
-  getAction(actionId){if(!actionId)return null;try{const row=this.ctx.storage.sql.exec(`SELECT response_json FROM action_log WHERE action_id=? LIMIT 1`,String(actionId)).one();return row?JSON.parse(row.response_json):null}catch{return null}}
-  saveAction(actionId,playerId,action,response){if(!actionId)return;try{this.ctx.storage.sql.exec(`INSERT OR REPLACE INTO action_log(action_id,player_id,action,response_json,created_at) VALUES(?,?,?,?,?)`,String(actionId),String(playerId),String(action),JSON.stringify(response),Date.now());this.ctx.storage.sql.exec(`DELETE FROM action_log WHERE rowid NOT IN (SELECT rowid FROM action_log ORDER BY created_at DESC LIMIT ?)`,MAX_ACTION_LOG)}catch{}}
-  async action(action, body, user){
-    const actionId=String(body?.actionId||"").slice(0,120);
-    const replay=this.getAction(actionId);
-    if(replay)return {...replay,replayed:true};
-    const player=this.getPlayer();
-    const state=player ? JSON.parse(player.state_json) : cloneDefaultState();
-    const now=Date.now();
-    const day=utcDay();
-
-    if(action===ACTIONS.DAILY_CLAIM){
-      if(state.serverDailyClaim===day) return result(false,{error:"Daily reward already claimed",state});
-      const streak=state.serverDailyStreakDay===day ? Number(state.serverDailyStreak||0) : Number(state.serverDailyStreak||0)+1;
-      const coins=100+Math.min(100,streak*10);
-      state.coins=Number(state.coins||0)+coins;
-      state.combatStone=Number(state.combatStone||0)+5;
-      state.serverDailyClaim=day;
-      state.serverDailyStreak=streak;
-      state.serverDailyStreakDay=day;
-      this.savePlayer({playerId:String(user.id),name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:player?.created_at||now,updatedAt:now});
-      const response=result(true,{action,coins,combatStone:5,streak,state,savedAt:now});this.saveAction(actionId,String(user.id),action,response);return response;
-    }
-
-    if(action===ACTIONS.SHOP_BUY){
-      const itemId=String(body?.itemId||"");
-      const item=SHOP[itemId];
-      if(!item) return result(false,{error:"Unknown shop item",state});
-      const balance=Number(state[item.currency]||0);
-      if(balance<item.price) return result(false,{error:"Not enough currency",currency:item.currency,price:item.price,balance,state});
-      state[item.currency]=balance-item.price;
-      state.inventory=Array.isArray(state.inventory)?state.inventory.slice(0,199):[];
-      state.inventory.push(item.item);
-      this.savePlayer({playerId:String(user.id),name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:player?.created_at||now,updatedAt:now});
-      const response=result(true,{action,itemId,price:item.price,currency:item.currency,item:item.item,state,savedAt:now});this.saveAction(actionId,String(user.id),action,response);return response;
-    }
-
-    return result(false,{error:"Unsupported action",state});
-  }
-
-  async fetch(request){
-    const url=new URL(request.url); if(request.method==="GET"&&url.pathname==="/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.4.0",serverShop:true});
-    if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);
-    let body;try{body=await request.json()}catch{return json({ok:false,error:"Invalid JSON"},400)}
-    const auth=await validateTelegramInitData(body.initData,this.env.TELEGRAM_BOT_TOKEN);if(!auth.ok)return json({ok:false,error:auth.error},401);
-    const user=auth.user,playerId=String(user.id),now=Date.now();
-    if(url.pathname==="/auth"){
-      const existing=this.getPlayer(); if(!existing){const state=cloneDefaultState();this.savePlayer({playerId,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:now,updatedAt:now});return json({ok:true,created:true,user:{id:playerId,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null},state});}
-      return json({ok:true,created:false,user:{id:playerId,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null},state:JSON.parse(existing.state_json)});
-    }
-    if(url.pathname==="/save"){
-      const incoming=normalizeState(body.state);
-      const existing=this.getPlayer();
-      const existingState=existing?JSON.parse(existing.state_json):cloneDefaultState();
-      for(const key of PROTECTED_FIELDS){if(Object.prototype.hasOwnProperty.call(existingState,key))incoming[key]=existingState[key];}
-      const state=incoming,stateJson=JSON.stringify(state);
-      if(new TextEncoder().encode(stateJson).byteLength>MAX_STATE_BYTES)return json({ok:false,error:"State is too large"},413);
-      this.savePlayer({playerId,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:existing?.created_at||now,updatedAt:now});return json({ok:true,savedAt:now,state});
-    }
-    if(url.pathname==="/action"){
-      if(typeof body.actionId!=="string"||!body.actionId)return json({ok:false,error:"Missing actionId"},400);
-      const action=typeof body.action==="string"?body.action:"";
-      if(action!==ACTIONS.DAILY_CLAIM&&action!==ACTIONS.SHOP_BUY)return json({ok:false,error:"Unsupported action"},400);
-      const outcome=await this.action(action,body,user);
-      return json(outcome,outcome.ok?200:409);
-    }
-    if(url.pathname==="/shop"){
-      return json({ok:true,version:"G83",currency:"coins",items:Object.entries(SHOP).map(([id,item])=>({id,...item}))});
-    }
-    return json({ok:false,error:"Not found"},404);
-  }
-}
-
-function presenceSnapshot(hub){
-  return hub.getWebSockets().map(ws=>ws.deserializeAttachment?.()).filter(x=>x&&x.authenticated).map(x=>({id:x.id,name:x.name,username:x.username||null,ready:!!x.ready,lastSeen:x.lastSeen}));
-}
-
-export class PresenceHub extends DurableObject {
-  constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;}
-  broadcast(payload,except=null){const message=JSON.stringify(payload);for(const ws of this.ctx.getWebSockets()){if(ws===except)continue;try{ws.send(message)}catch{}}}
-  async fetch(request){
-    if(request.method!=="GET"||request.headers.get("Upgrade")?.toLowerCase()!=="websocket")return json({ok:false,error:"WebSocket upgrade required"},426);
-    const pair=new WebSocketPair(),client=pair[0],server=pair[1];
-    this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({authenticated:false,id:null,name:null,username:null,ready:false,lastSeen:Date.now()});
-    server.send(JSON.stringify({type:"hello",version:"G77",authRequired:true}));
-    return new Response(null,{status:101,webSocket:client});
-  }
-  async authenticate(ws,initData){
-    const auth=await validateTelegramInitData(initData,this.env.TELEGRAM_BOT_TOKEN);if(!auth.ok){ws.send(JSON.stringify({type:"auth_error",error:auth.error}));ws.close(1008,"auth failed");return false;}
-    const u=auth.user, id=String(u.id); ws.serializeAttachment({authenticated:true,id,name:displayName(u),username:u.username||null,ready:false,lastSeen:Date.now()});
-    ws.send(JSON.stringify({type:"authenticated",player:{id,name:displayName(u),username:u.username||null},online:presenceSnapshot(this)}));
-    this.broadcast({type:"presence",online:presenceSnapshot(this)},ws); return true;
-  }
-  async webSocketMessage(ws,message){
-    let data;try{data=JSON.parse(typeof message==="string"?message:new TextDecoder().decode(message))}catch{return}
-    const meta=ws.deserializeAttachment?.()||{};
-    if(!meta.authenticated){if(data.type==="auth"&&typeof data.initData==="string")await this.authenticate(ws,data.initData);else ws.send(JSON.stringify({type:"auth_required"}));return;}
-    meta.lastSeen=Date.now();
-    if(data.type==="ping"){ws.serializeAttachment(meta);ws.send(JSON.stringify({type:"pong",at:meta.lastSeen}));return;}
-    if(data.type==="ready"){meta.ready=!!data.value;ws.serializeAttachment(meta);this.broadcast({type:"presence",online:presenceSnapshot(this)});return;}
-    if(data.type==="party_invite"){const target=String(data.targetId||"");if(!target)return;for(const peer of this.ctx.getWebSockets()){const p=peer.deserializeAttachment?.();if(p?.authenticated&&p.id===target){peer.send(JSON.stringify({type:"party_invite",from:{id:meta.id,name:meta.name,username:meta.username||null},partyId:String(data.partyId||"")}));}}return;}
-    if(data.type==="chat"){const text=typeof data.text==="string"?data.text.trim().slice(0,500):"";if(!text)return;this.broadcast({type:"chat",from:{id:meta.id,name:meta.name},text,at:Date.now()});}
-  }
-  async webSocketClose(ws){const meta=ws.deserializeAttachment?.();if(meta?.authenticated)this.broadcast({type:"presence",online:presenceSnapshot(this)});}
-  async webSocketError(ws){try{ws.close(1011,"socket error")}catch{}}
-}
-
-export default { async fetch(request,env){
-  if(request.method==="OPTIONS")return new Response(null,{status:204,headers:{"access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"Content-Type","access-control-max-age":"86400"}});
-  const url=new URL(request.url);
-  if(url.pathname==="/api/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.4.0",telegramConfigured:Boolean(env.TELEGRAM_BOT_TOKEN),realtime:true,serverShop:true});
-  if(url.pathname==="/telegram/webhook"){
-    if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);let update;try{update=await request.json()}catch{return json({ok:false,error:"Invalid JSON"},400)}try{await handleTelegramUpdate(update,env)}catch(e){console.error("Telegram webhook error",e)}return json({ok:true});
-  }
-  if(url.pathname==="/api/setup-telegram-webhook"){
-    if(request.method!=="GET")return json({ok:false,error:"Method not allowed"},405);if(!env.TELEGRAM_BOT_TOKEN)return json({ok:false,error:"Telegram token is not configured"},500);const webhookUrl=`${url.origin}/telegram/webhook`;const result=await telegramApi("setWebhook",{url:webhookUrl,allowed_updates:["message"]},env.TELEGRAM_BOT_TOKEN);return json({ok:Boolean(result?.ok),webhookUrl,telegram:result},result?.ok?200:502);
-  }
-  if(url.pathname==="/api/telegram-webhook-info"){
-    if(!env.TELEGRAM_BOT_TOKEN)return json({ok:false,error:"Telegram token is not configured"},500);const result=await telegramApi("getWebhookInfo",{},env.TELEGRAM_BOT_TOKEN);return json(result,result?.ok?200:502);
-  }
-  if(url.pathname==="/api/shop"){
-    if(request.method!=="GET")return json({ok:false,error:"Method not allowed"},405);
-    return json({ok:true,version:"G83",currency:"coins",items:Object.entries(SHOP).map(([id,item])=>({id,...item}))});
-  }
-  if(url.pathname==="/api/auth"||url.pathname==="/api/save"||url.pathname==="/api/action"){
-    if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);let body;try{body=await request.clone().json()}catch{return json({ok:false,error:"Invalid JSON"},400)}let user;try{const params=new URLSearchParams(body.initData||"");const raw=params.get("user");user=raw?JSON.parse(raw):null}catch{user=null}if(!user||!Number.isSafeInteger(user.id))return json({ok:false,error:"Telegram user is missing"},401);const id=env.GAME_HUB.idFromName(`player:${user.id}`);return env.GAME_HUB.get(id).fetch(request);
-  }
-  if(url.pathname==="/api/ws"){
-    if(request.headers.get("Upgrade")?.toLowerCase()!=="websocket")return json({ok:false,error:"WebSocket upgrade required"},426);const id=env.PRESENCE_HUB.idFromName("global");return env.PRESENCE_HUB.get(id).fetch(request);
-  }
-  return json({ok:false,error:"Not found"},404);
-}};
+const MAX_AUTH_AGE_SECONDS=24*60*60, MAX_STATE_BYTES=64*1024, BOT_USERNAME="TeritoryGameBot";
+const DEFAULT_STATE={coins:1000,gems:25,energy:200,combatStone:0,hp:120,maxHp:120,level:1,exp:0,maxExp:100,weapon:"Кулаки",bonusDamage:0,strength:5,agility:5,defense:0,freePoints:0,inventory:["🪓"],alexQuest:0,cityRep:0,wins:0,losses:0,battles:0};
+function json(data,status=200){return new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json; charset=UTF-8","cache-control":"no-store","access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"Content-Type"})}
+function hex(b){return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("")}
+function timingSafeEqual(a,b){if(a.length!==b.length)return false;let d=0;for(let i=0;i<a.length;i++)d|=a.charCodeAt(i)^b.charCodeAt(i);return d===0}
+async function hmacHex(keyBytes,message){const k=await crypto.subtle.importKey("raw",keyBytes,{name:"HMAC",hash:"SHA-256"},false,["sign"]);return hex(await crypto.subtle.sign("HMAC",k,new TextEncoder().encode(message)))}
+async function validateTelegramInitData(initData,botToken){if(!botToken||typeof initData!=="string"||!initData)return{ok:false,error:"Telegram auth is not configured"};let p;try{p=new URLSearchParams(initData)}catch{return{ok:false,error:"Invalid initData"}}const hash=p.get("hash"),authDate=Number(p.get("auth_date"));if(!hash)return{ok:false,error:"Missing Telegram hash"};if(!Number.isFinite(authDate))return{ok:false,error:"Missing auth_date"};const age=Math.floor(Date.now()/1000)-authDate;if(age<-60||age>MAX_AUTH_AGE_SECONDS)return{ok:false,error:"Telegram auth data is expired"};const dcs=[...p.entries()].filter(([k])=>k!=="hash").sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>`${k}=${v}`).join("\n");const tk=await crypto.subtle.importKey("raw",new TextEncoder().encode(botToken),{name:"HMAC",hash:"SHA-256"},false,["sign"]);const sk=await crypto.subtle.sign("HMAC",tk,new TextEncoder().encode("WebAppData"));const calc=await hmacHex(new Uint8Array(sk),dcs);if(!timingSafeEqual(calc,hash.toLowerCase()))return{ok:false,error:"Invalid Telegram signature"};let user;try{user=JSON.parse(p.get("user")||"null")}catch{return{ok:false,error:"Invalid Telegram user data"}}if(!user||!Number.isSafeInteger(user.id))return{ok:false,error:"Telegram user is missing"};return{ok:true,user}}
+function displayName(u){return [u.first_name,u.last_name].filter(Boolean).join(" ").trim()||(u.username?`@${u.username}`:"Territory")}
+function cloneDefaultState(){return JSON.parse(JSON.stringify(DEFAULT_STATE))}
+function normalizeState(input){const s=cloneDefaultState();if(!input||typeof input!=="object")return s;const nums=["coins","gems","energy","combatStone","hp","maxHp","level","exp","maxExp","bonusDamage","strength","agility","defense","freePoints","alexQuest","cityRep","merchantRep","marketDay","wins","losses","battles","gameDice","gameRolls","gameSteps","gameEventVersion","gameTaskProgress","gameEndsAt","gameSaveVersion"];for(const k of nums)if(Number.isFinite(Number(input[k])))s[k]=Number(input[k]);if(typeof input.weapon==="string"&&input.weapon.length<=80)s.weapon=input.weapon;if(Array.isArray(input.inventory))s.inventory=input.inventory.filter(x=>typeof x==="string").slice(0,200);for(const k of ["gameMilestones","gameTaskClaims","gamePanelClaims","gameJackpotClaims"])if(Array.isArray(input[k]))s[k]=input[k].slice(0,500);if(typeof input.gameGiftDate==="string"&&input.gameGiftDate.length<=32)s.gameGiftDate=input.gameGiftDate;return s}
+async function telegramApi(method,body,token){const r=await fetch(`https://api.telegram.org/bot${token}/${method}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});try{return await r.json()}catch{return{ok:false,error:`Telegram API HTTP ${r.status}`}}}
+async function handleTelegramUpdate(update,env){const m=update?.message,t=typeof m?.text==="string"?m.text.trim():"",chatId=m?.chat?.id;if(chatId==null||!t)return;const c=t.split(/\s+/)[0].split("@")[0].toLowerCase();if(c!=="/start"&&c!=="/game")return;await telegramApi("sendMessage",{chat_id:chatId,text:"🏰 Territory — Sdolars\n\nДобро пожаловать! Открой игру и продолжай свой путь.",reply_markup:{inline_keyboard:[[{text:"🎮 ИГРАТЬ",url:`https://t.me/${BOT_USERNAME}?startapp`}]]}},env.TELEGRAM_BOT_TOKEN)}
+const ACTIONS=Object.freeze({DAILY_CLAIM:"daily_claim",SHOP_BUY:"shop_buy"}),MAX_ACTION_LOG=100,PROTECTED_FIELDS=["coins","gems","combatStone","inventory"];
+const SHOP=Object.freeze({axe:{price:250,currency:"coins",item:"🪓 Топор новичка"},sword:{price:600,currency:"coins",item:"⚔️ Меч Sdolars"},shield:{price:500,currency:"coins",item:"🛡️ Щит стража"}});
+export class GameHub extends DurableObject{constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;this.ctx.blockConcurrencyWhile(async()=>this.ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS player (player_id TEXT PRIMARY KEY,name TEXT NOT NULL,username TEXT,photo_url TEXT,state_json TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS action_log (action_id TEXT PRIMARY KEY,player_id TEXT NOT NULL,action TEXT NOT NULL,response_json TEXT NOT NULL,created_at INTEGER NOT NULL)`))}getPlayer(){return this.ctx.storage.sql.exec(`SELECT * FROM player LIMIT 1`).one()}savePlayer(p){this.ctx.storage.sql.exec(`INSERT OR REPLACE INTO player(player_id,name,username,photo_url,state_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`,p.playerId,p.name,p.username||null,p.photoUrl||null,JSON.stringify(p.state),p.createdAt,p.updatedAt)}getAction(id){if(!id)return null;try{const r=this.ctx.storage.sql.exec(`SELECT response_json FROM action_log WHERE action_id=? LIMIT 1`,String(id)).one();return r?JSON.parse(r.response_json):null}catch{return null}}saveAction(id,pid,a,res){if(!id)return;try{this.ctx.storage.sql.exec(`INSERT OR REPLACE INTO action_log(action_id,player_id,action,response_json,created_at) VALUES(?,?,?,?,?)`,String(id),String(pid),String(a),JSON.stringify(res),Date.now());this.ctx.storage.sql.exec(`DELETE FROM action_log WHERE rowid NOT IN (SELECT rowid FROM action_log ORDER BY created_at DESC LIMIT ?)`,MAX_ACTION_LOG)}catch{}}
+async action(action,body,user){const id=String(body?.actionId||"").slice(0,120),replay=this.getAction(id);if(replay)return replay;const existing=this.getPlayer(),state=existing?JSON.parse(existing.state_json):cloneDefaultState(),now=Date.now(),result=(ok,extra={})=>({ok,...extra});if(action===ACTIONS.DAILY_CLAIM){const day=new Date().toISOString().slice(0,10);if(state.serverDailyClaimDate===day)return result(false,{error:"Daily reward already claimed",state});const streak=Number(state.serverDailyStreak||0)+1,coins=100+Math.min(streak,7)*25;state.coins+=coins;state.combatStone+=5;state.serverDailyClaimDate=day;state.serverDailyStreak=streak;this.savePlayer({playerId:String(user.id),name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:existing?.created_at||now,updatedAt:now});const response=result(true,{action,coins,combatStone:5,streak,state,savedAt:now});this.saveAction(id,String(user.id),action,response);return response}if(action===ACTIONS.SHOP_BUY){const itemId=String(body?.itemId||""),item=SHOP[itemId];if(!item)return result(false,{error:"Unknown shop item",state});const balance=Number(state[item.currency]||0);if(balance<item.price)return result(false,{error:"Not enough currency",currency:item.currency,price:item.price,balance,state});state[item.currency]=balance-item.price;state.inventory=Array.isArray(state.inventory)?state.inventory.slice(0,199):[];state.inventory.push(item.item);this.savePlayer({playerId:String(user.id),name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:existing?.created_at||now,updatedAt:now});const response=result(true,{action,itemId,price:item.price,currency:item.currency,item:item.item,state,savedAt:now});this.saveAction(id,String(user.id),action,response);return response}return result(false,{error:"Unsupported action",state})}
+async fetch(request){const url=new URL(request.url);if(request.method==="GET"&&url.pathname==="/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.5.0",realtime:true,rooms:true,serverShop:true});if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);let body;try{body=await request.json()}catch{return json({ok:false,error:"Invalid JSON"},400)}const auth=await validateTelegramInitData(body.initData,this.env.TELEGRAM_BOT_TOKEN);if(!auth.ok)return json({ok:false,error:auth.error},401);const user=auth.user,pid=String(user.id),now=Date.now();if(url.pathname==="/auth"){const e=this.getPlayer();if(!e){const state=cloneDefaultState();this.savePlayer({playerId:pid,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:now,updatedAt:now});return json({ok:true,created:true,user:{id:pid,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null},state})}return json({ok:true,created:false,user:{id:pid,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null},state:JSON.parse(e.state_json)})}if(url.pathname==="/save"){const incoming=normalizeState(body.state),e=this.getPlayer(),old=e?JSON.parse(e.state_json):cloneDefaultState();for(const k of PROTECTED_FIELDS)if(Object.prototype.hasOwnProperty.call(old,k))incoming[k]=old[k];const sj=JSON.stringify(incoming);if(new TextEncoder().encode(sj).byteLength>MAX_STATE_BYTES)return json({ok:false,error:"State is too large"},413);this.savePlayer({playerId:pid,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state:incoming,createdAt:e?.created_at||now,updatedAt:now});return json({ok:true,savedAt:now,state:incoming})}if(url.pathname==="/action"){if(typeof body.actionId!=="string"||!body.actionId)return json({ok:false,error:"Missing actionId"},400);const a=typeof body.action==="string"?body.action:"";if(!ACTIONS[a.toUpperCase()]&&a!==ACTIONS.DAILY_CLAIM&&a!==ACTIONS.SHOP_BUY)return json({ok:false,error:"Unsupported action"},400);const out=await this.action(a,body,user);return json(out,out.ok?200:409)}if(url.pathname==="/shop")return json({ok:true,version:"G84",currency:"coins",items:Object.entries(SHOP).map(([id,item])=>({id,...item}))});return json({ok:false,error:"Not found"},404)}}
+function presenceSnapshot(hub){return hub.getWebSockets().map(ws=>ws.deserializeAttachment?.()).filter(x=>x?.authenticated).map(x=>({id:x.id,name:x.name,username:x.username||null,ready:!!x.ready,lastSeen:x.lastSeen}))}
+export class PresenceHub extends DurableObject{constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env}broadcast(p,except=null){const m=JSON.stringify(p);for(const ws of this.ctx.getWebSockets()){if(ws===except)continue;try{ws.send(m)}catch{}}}async fetch(request){if(request.method!=="GET"||request.headers.get("Upgrade")?.toLowerCase()!=="websocket")return json({ok:false,error:"WebSocket upgrade required"},426);const pair=new WebSocketPair(),client=pair[0],server=pair[1];this.ctx.acceptWebSocket(server);server.serializeAttachment({authenticated:false,id:null,name:null,username:null,ready:false,lastSeen:Date.now()});server.send(JSON.stringify({type:"hello",version:"G84",authRequired:true}));return new Response(null,{status:101,webSocket:client})}async authenticate(ws,initData){const a=await validateTelegramInitData(initData,this.env.TELEGRAM_BOT_TOKEN);if(!a.ok){ws.send(JSON.stringify({type:"auth_error",error:a.error}));ws.close(1008,"auth failed");return false}const u=a.user;ws.serializeAttachment({authenticated:true,id:String(u.id),name:displayName(u),username:u.username||null,ready:false,lastSeen:Date.now()});ws.send(JSON.stringify({type:"authenticated",player:{id:String(u.id),name:displayName(u),username:u.username||null},online:presenceSnapshot(this)}));this.broadcast({type:"presence",online:presenceSnapshot(this)},ws);return true}async webSocketMessage(ws,message){let d;try{d=JSON.parse(typeof message==="string"?message:new TextDecoder().decode(message))}catch{return}const m=ws.deserializeAttachment?.()||{};if(!m.authenticated){if(d.type==="auth"&&typeof d.initData==="string")await this.authenticate(ws,d.initData);else ws.send(JSON.stringify({type:"auth_required"}));return}m.lastSeen=Date.now();if(d.type==="ping"){ws.serializeAttachment(m);ws.send(JSON.stringify({type:"pong",at:m.lastSeen}));return}if(d.type==="ready"){m.ready=!!d.value;ws.serializeAttachment(m);this.broadcast({type:"presence",online:presenceSnapshot(this)});return}if(d.type==="party_invite"){const target=String(d.targetId||"");for(const peer of this.ctx.getWebSockets()){const p=peer.deserializeAttachment?.();if(p?.authenticated&&p.id===target)peer.send(JSON.stringify({type:"party_invite",from:{id:m.id,name:m.name},partyId:String(d.partyId||"")}))}return}if(d.type==="chat"){const text=typeof d.text==="string"?d.text.trim().slice(0,500):"";if(text)this.broadcast({type:"chat",from:{id:m.id,name:m.name},text,at:Date.now()})}}async webSocketClose(ws){const m=ws.deserializeAttachment?.();if(m?.authenticated)this.broadcast({type:"presence",online:presenceSnapshot(this)})}}
+const ZONES=["head","chest","stomach","waist","legs"],DEF_ZONES=["head","chest","stomach","waist"],MAX_ROOM=20;
+function roomPlayer(meta,team){return{id:meta.id,name:meta.name,level:Number(meta.level)||1,team:team||null,hp:120,maxHp:120,ready:false,connected:true,defeated:false}}
+function safeRoom(r){return{roomId:r.roomId,mode:r.mode,status:r.status,ownerId:r.ownerId,createdAt:r.createdAt,startsAt:r.startsAt,round:r.round,turn:r.turn,players:r.players.map(p=>({...p})),battle:r.battle?{phase:r.battle.phase,turn:r.battle.turn,round:r.battle.round,logs:r.battle.logs.slice(-40)}:null}}
+export class RoomHub extends DurableObject{constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;this.room=null;this.ctx.blockConcurrencyWhile(async()=>{const raw=await this.ctx.storage.get("room");if(raw)this.room=raw})}
+async persist(){if(this.room)await this.ctx.storage.put("room",this.room)}
+sockets(){return this.ctx.getWebSockets()}send(ws,p){try{ws.send(JSON.stringify(p))}catch{}}
+broadcast(p){for(const ws of this.sockets())this.send(ws,p)}
+async fetch(request){if(request.method!=="GET"||request.headers.get("Upgrade")?.toLowerCase()!=="websocket")return json({ok:false,error:"WebSocket upgrade required"},426);const pair=new WebSocketPair(),client=pair[0],server=pair[1];this.ctx.acceptWebSocket(server);server.serializeAttachment({authenticated:false,id:null,name:null,roomId:null});this.send(server,{type:"hello",version:"G84",roomRequired:true});return new Response(null,{status:101,webSocket:client})}
+async authenticate(ws,initData){const a=await validateTelegramInitData(initData,this.env.TELEGRAM_BOT_TOKEN);if(!a.ok){this.send(ws,{type:"room_error",error:a.error});ws.close(1008,"auth failed");return null}const u=a.user;const m={authenticated:true,id:String(u.id),name:displayName(u),username:u.username||null,level:1,roomId:null};ws.serializeAttachment(m);this.send(ws,{type:"room_authenticated",player:{id:m.id,name:m.name}});return m}
+async webSocketMessage(ws,message){let d;try{d=JSON.parse(typeof message==="string"?message:new TextDecoder().decode(message))}catch{return}let m=ws.deserializeAttachment?.()||{};if(!m.authenticated){if(d.type==="auth"&&typeof d.initData==="string"){m=await this.authenticate(ws,d.initData);if(!m)return}else{this.send(ws,{type:"auth_required"});return}}if(d.type==="ping"){this.send(ws,{type:"pong",at:Date.now()});return}if(d.type==="room_create"){await this.createRoom(ws,m,d);return}if(d.type==="room_join"){await this.joinRoom(ws,m,d);return}if(d.type==="room_leave"){await this.leaveRoom(ws,m);return}if(d.type==="room_ready"){await this.ready(ws,m,!!d.value);return}if(d.type==="room_start"){await this.start(ws,m);return}if(d.type==="battle_action"){await this.battleAction(ws,m,d);return}}
+find(id){return(this.room?.players||[]).find(p=>p.id===id)}
+async createRoom(ws,m,d){if(m.roomId){this.send(ws,{type:"room_error",error:"Already in a room"});return}if(this.room&&this.room.status!=="finished"){this.send(ws,{type:"room_error",error:"Room already exists"});return}const mode=["duel","chaos","group"].includes(d.mode)?d.mode:"duel",max=mode==="duel"?2:MAX_ROOM,roomId=String(d.roomId||crypto.randomUUID().slice(0,8)).replace(/[^a-zA-Z0-9_-]/g,"").slice(0,16)||crypto.randomUUID().slice(0,8);this.room={roomId,mode,status:"waiting",ownerId:m.id,createdAt:Date.now(),startsAt:Date.now()+180000,round:0,turn:null,players:[roomPlayer(m,mode==="group"?Number(d.team)||1:null)],battle:null};m.roomId=roomId;ws.serializeAttachment(m);await this.persist();this.send(ws,{type:"room_state",room:safeRoom(this.room),you:m.id,max});this.broadcast({type:"room_state",room:safeRoom(this.room),you:null,max})}
+async joinRoom(ws,m,d){if(m.roomId){this.send(ws,{type:"room_error",error:"Already in a room"});return}if(!this.room||this.room.status!=="waiting"){this.send(ws,{type:"room_error",error:"Room not found or already started"});return}if(String(d.roomId||"")!==this.room.roomId){this.send(ws,{type:"room_error",error:"Wrong room code"});return}if(this.room.players.length>=(this.room.mode==="duel"?2:MAX_ROOM)){this.send(ws,{type:"room_error",error:"Room is full"});return}const team=this.room.mode==="group"?(this.room.players.filter(p=>p.team===1).length<=this.room.players.filter(p=>p.team===2).length?1:2):null;this.room.players.push(roomPlayer(m,team));m.roomId=this.room.roomId;ws.serializeAttachment(m);await this.persist();this.broadcast({type:"room_state",room:safeRoom(this.room),you:null,max:this.room.mode==="duel"?2:MAX_ROOM})}
+async leaveRoom(ws,m){if(!m.roomId||!this.room)return;const p=this.find(m.id);if(p)p.connected=false;this.room.players=this.room.players.filter(p=>p.id!==m.id);m.roomId=null;ws.serializeAttachment(m);if(this.room.players.length===0){this.room=null;await this.ctx.storage.delete("room");return}if(this.room.ownerId===m.id)this.room.ownerId=this.room.players[0].id;await this.persist();this.broadcast({type:"room_state",room:safeRoom(this.room),you:null,max:this.room.mode==="duel"?2:MAX_ROOM})}
+async ready(ws,m,value){if(!this.room||m.roomId!==this.room.roomId||this.room.status!=="waiting")return;const p=this.find(m.id);if(!p)return;p.ready=value;await this.persist();this.broadcast({type:"room_state",room:safeRoom(this.room),you:null,max:this.room.mode==="duel"?2:MAX_ROOM})}
+async start(ws,m){if(!this.room||m.roomId!==this.room.roomId)return;if(this.room.ownerId!==m.id){this.send(ws,{type:"room_error",error:"Only room owner can start"});return}if(this.room.players.length<2){this.send(ws,{type:"room_error",error:"Need at least 2 players"});return}if(this.room.mode==="chaos"){this.room.players.forEach((p,i)=>p.team=(i%2)+1)}this.room.players.forEach(p=>{p.ready=true;p.hp=120;p.maxHp=120;p.defeated=false});this.room.status="battle";this.room.round=1;this.room.turn=this.room.players[0].id;this.room.battle={phase:"choose",turn:this.room.turn,round:1,logs:[`⚔️ ${this.room.mode} — серверный бой начался.`]};await this.persist();this.broadcast({type:"battle_state",room:safeRoom(this.room),you:null})}
+async battleAction(ws,m,d){if(!this.room||m.roomId!==this.room.roomId||this.room.status!=="battle")return;if(this.room.turn!==m.id){this.send(ws,{type:"room_error",error:"Сейчас ход другого игрока"});return}const attack=String(d.attack||""),defense=Array.isArray(d.defense)?d.defense.map(String).filter(x=>DEF_ZONES.includes(x)).slice(0,2):[],targetId=String(d.targetId||"");if(!ZONES.includes(attack)||defense.length!==2){this.send(ws,{type:"room_error",error:"Выбери атаку и ровно 2 защиты"});return}const me=this.find(m.id),targets=this.room.players.filter(p=>p.team!==me.team&&!p.defeated),target=targets.find(p=>p.id===targetId)||targets[0];if(!target){this.send(ws,{type:"room_error",error:"Нет доступной цели"});return}const hit=Math.max(8,24+(Number(me.level)-1)*2-(attack===defense[0]||attack===defense[1]?8:0));target.hp=Math.max(0,target.hp-hit);if(target.hp<=0)target.defeated=true;this.room.battle.logs.push(`⚔️ ${me.name} атаковал ${target.name}: −${hit} HP (${attack}).`);const enemies=this.room.players.filter(p=>p.team!==me.team&&!p.defeated);if(enemies.length===0){this.room.status="finished";this.room.battle.phase="victory";this.room.battle.logs.push(`🏆 Победа команды игрока ${me.name}.`);await this.persist();this.broadcast({type:"battle_state",room:safeRoom(this.room),you:null});return}const livingEnemies=enemies;const enemy=livingEnemies[0],counter=Math.max(5,14+(Number(enemy.level)-1));me.hp=Math.max(0,me.hp-counter);if(me.hp<=0)me.defeated=true;this.room.battle.logs.push(`🛡️ ${enemy.name} ответил: −${counter} HP.`);if(me.defeated){this.room.status="finished";this.room.battle.phase="defeat";this.room.battle.logs.push(`💀 ${me.name} повержен.`);await this.persist();this.broadcast({type:"battle_state",room:safeRoom(this.room),you:null});return}this.room.round++;const living=this.room.players.filter(p=>!p.defeated);const next=living.find(p=>p.id===this.room.turn)?.id||living[0]?.id;this.room.turn=next;this.room.battle.round=this.room.round;this.room.battle.turn=next;await this.persist();this.broadcast({type:"battle_state",room:safeRoom(this.room),you:null})}
+async webSocketClose(ws){const m=ws.deserializeAttachment?.();if(!m?.authenticated||!m.roomId||!this.room)return;const p=this.find(m.id);if(p)p.connected=false;await this.persist();this.broadcast({type:"room_state",room:safeRoom(this.room),you:null,max:this.room.mode==="duel"?2:MAX_ROOM})}}
+export default {async fetch(request,env){if(request.method==="OPTIONS")return new Response(null,{status:204,headers:{"access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"Content-Type","access-control-max-age":"86400"}});const url=new URL(request.url);if(url.pathname==="/api/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.5.0",telegramConfigured:Boolean(env.TELEGRAM_BOT_TOKEN),realtime:true,rooms:true,serverShop:true});if(url.pathname==="/telegram/webhook"){if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);let u;try{u=await request.json()}catch{return json({ok:false,error:"Invalid JSON"},400)}try{await handleTelegramUpdate(u,env)}catch(e){console.error("Telegram webhook error",e)}return json({ok:true})}if(url.pathname==="/api/setup-telegram-webhook"){if(request.method!=="GET")return json({ok:false,error:"Method not allowed"},405);if(!env.TELEGRAM_BOT_TOKEN)return json({ok:false,error:"Telegram token is not configured"},500);const result=await telegramApi("setWebhook",{url:`${url.origin}/telegram/webhook`,allowed_updates:["message"]},env.TELEGRAM_BOT_TOKEN);return json({ok:Boolean(result?.ok),webhookUrl:`${url.origin}/telegram/webhook`,telegram:result},result?.ok?200:502)}if(url.pathname==="/api/telegram-webhook-info"){if(!env.TELEGRAM_BOT_TOKEN)return json({ok:false,error:"Telegram token is not configured"},500);const result=await telegramApi("getWebhookInfo",{},env.TELEGRAM_BOT_TOKEN);return json(result,result?.ok?200:502)}if(url.pathname==="/api/shop"){if(request.method!=="GET")return json({ok:false,error:"Method not allowed"},405);return json({ok:true,version:"G84",currency:"coins",items:Object.entries(SHOP).map(([id,item])=>({id,...item}))})}if(url.pathname==="/api/auth"||url.pathname==="/api/save"||url.pathname==="/api/action"){if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);let body;try{body=await request.clone().json()}catch{return json({ok:false,error:"Invalid JSON"},400)}let user;try{user=JSON.parse(new URLSearchParams(body.initData||"").get("user")||"null")}catch{user=null}if(!user||!Number.isSafeInteger(user.id))return json({ok:false,error:"Telegram user is missing"},401);const id=env.GAME_HUB.idFromName(`player:${user.id}`);return env.GAME_HUB.get(id).fetch(request)}if(url.pathname==="/api/ws"){if(request.headers.get("Upgrade")?.toLowerCase()!=="websocket")return json({ok:false,error:"WebSocket upgrade required"},426);return env.PRESENCE_HUB.get(env.PRESENCE_HUB.idFromName("global")).fetch(request)}if(url.pathname==="/api/room/ws"){if(request.headers.get("Upgrade")?.toLowerCase()!=="websocket")return json({ok:false,error:"WebSocket upgrade required"},426);const roomId=new URL(request.url).searchParams.get("roomId")||"lobby";return env.ROOM_HUB.get(env.ROOM_HUB.idFromName(`room:${roomId}`)).fetch(request)}return json({ok:false,error:"Not found"},404)}};

@@ -10,6 +10,10 @@ class_name = "GameHub"
 name = "PRESENCE_HUB"
 class_name = "PresenceHub"
 
+[[durable_objects.bindings]]
+name = "ROOM_HUB"
+class_name = "RoomHub"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["GameHub"]
@@ -17,6 +21,10 @@ new_sqlite_classes = ["GameHub"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["PresenceHub"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["RoomHub"]
 
 [observability]
 enabled = true
