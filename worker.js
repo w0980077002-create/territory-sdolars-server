@@ -236,17 +236,17 @@ async function playerFromTelegram(request, env, stub) {
 
 function adminHTML(auth=null) {
 const authed = !!auth;
-return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Territory Admin G91</title>
+return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Territory Admin G91.4</title>
 <style>body{margin:0;background:#0a1016;color:#edf4f7;font-family:system-ui,-apple-system,sans-serif}header{padding:15px;background:#111b24;position:sticky;top:0;z-index:3;border-bottom:1px solid #263642}main{max-width:1180px;margin:auto;padding:14px}.tabs{display:flex;gap:7px;overflow:auto;margin-bottom:12px}button,input,select,textarea{font:inherit}button{padding:9px 12px;border:1px solid #3b4d59;border-radius:9px;background:#182630;color:#fff;cursor:pointer}button:hover{background:#243640}.danger{background:#632522}.good{background:#24502e}.muted{color:#91a2ab;font-size:12px}.panel{display:none}.panel.active{display:block}.card{background:#111b23;border:1px solid #273742;border-radius:12px;padding:13px;margin:9px 0}.row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:9px}input,select,textarea{box-sizing:border-box;width:100%;padding:9px;background:#0d151c;border:1px solid #394b56;border-radius:8px;color:#fff}table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid #26343d;text-align:left;font-size:13px;vertical-align:top}.click{cursor:pointer}.click:hover{background:#17242c}.pill{display:inline-block;padding:3px 7px;border-radius:999px;background:#24343e;font-size:11px}.modal{position:fixed;inset:0;background:#000b;display:none;align-items:flex-start;justify-content:center;padding:20px;overflow:auto;z-index:10}.modal.show{display:flex}.modalbox{width:min(1050px,100%);background:#101a22;border:1px solid #334752;border-radius:14px;padding:14px}.actions button{margin:3px}.history{max-height:380px;overflow:auto}.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px}.kv div{background:#0c141a;padding:8px;border-radius:8px}.small{font-size:12px}.dangerText{color:#ff8f86}</style></head><body>
-<header><b>⚔️ Territory · G91 Admin</b><span id="status" class="muted">${authed ? ` · ${auth.label}: ${auth.login}` : ""}</span></header><main>
+<header><b>⚔️ Territory · G91.4 Admin</b><span id="status" class="muted">${authed ? ` · ${auth.label}: ${auth.login}` : ""}</span></header><main>
 <div id="login" class="card" style="display:${authed ? "none" : "block"}"><h2>Вход в панель</h2><div class="grid">
 <div class="card"><h3>👑 Владелец</h3><p class="muted">Полный доступ. Используется текущий секрет ADMIN_PASSWORD.</p>
-<form method="POST" action="/admin/login" onsubmit="if(window.adminLogin){window.adminLogin('owner',event);return false}">
+<form method="POST" action="/admin/login">
 <input id="ownerLogin" name="login" value="owner" placeholder="Логин владельца"><br><br>
 <input id="ownerPw" name="password" type="password" placeholder="Пароль владельца"><input type="hidden" name="role" value="owner"><br><br>
 <button type="submit">Войти как владелец</button></form></div>
 <div class="card"><h3>🛡️ Модератор</h3><p class="muted">Роль подготовлена, но пароль в Cloudflare пока не настроен.</p>
-<form method="POST" action="/admin/login" onsubmit="if(window.adminLogin){window.adminLogin('moderator',event);return false}">
+<form method="POST" action="/admin/login">
 <input id="modLogin" name="login" placeholder="Логин модератора"><br><br>
 <input id="modPw" name="password" type="password" placeholder="Пароль модератора"><input type="hidden" name="role" value="moderator"><br><br>
 <button type="submit">Войти как модератор</button></form></div>
@@ -755,10 +755,15 @@ export class TerritoryDB {
 export default {
   async fetch(request,env,ctx){
     const u=new URL(request.url);
-    const stub=env.DB.get(env.DB.idFromName("global"));
 
     try{
-      if(u.pathname==="/admin" && request.method==="GET"){ const auth=await verifyAdminToken(cookies(request)[ADMIN_COOKIE],env); return page(adminHTML(auth)); }
+      // Admin login is deliberately handled before the Durable Object lookup.
+      // This keeps the login page independent from the game database and makes
+      // the native HTML form work even when browser JavaScript is unavailable.
+      if(u.pathname==="/admin" && request.method==="GET"){
+        const auth=await verifyAdminToken(cookies(request)[ADMIN_COOKIE],env);
+        return page(adminHTML(auth));
+      }
 
       if(u.pathname==="/admin/login" && request.method==="POST"){
         const ct=(request.headers.get("content-type")||"").toLowerCase();
@@ -775,6 +780,8 @@ export default {
         }
         return json({ok:true,role,label:ADMIN_ROLE_LABELS[role],login:cfg.login,permissions:ADMIN_ROLE_PERMS[role]},200,{"set-cookie":cookie});
       }
+
+      const stub=env.DB.get(env.DB.idFromName("global"));
 
       if(u.pathname.startsWith("/admin/api/")){
         const auth=await verifyAdminToken(cookies(request)[ADMIN_COOKIE],env);
@@ -868,6 +875,8 @@ export default {
       }
       const p=await playerFromTelegram(request,env,stub);
       const id=p.telegram_id;
+
+      if(u.pathname==="/admin/health") return json({ok:true,service:"admin",version:"G91.4"});
 
       if(u.pathname==="/api/auth") return json({
         ok:true,player:{
