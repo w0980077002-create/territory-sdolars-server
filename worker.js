@@ -71,8 +71,12 @@ const ACTIONS = Object.freeze({
 });
 
 const SHOP = Object.freeze({
-  axe: { price: 150, currency: "coins", item: "🪓" },
-  sword: { price: 350, currency: "coins", item: "⚔️" }
+  axe:    { price: 150, currency: "coins", item: "🪓", name: "Топор", bonusDamage: 8, slot: "weapon" },
+  sword:  { price: 350, currency: "coins", item: "⚔️", name: "Меч", bonusDamage: 15, slot: "weapon" },
+  helmet: { price: 250, currency: "coins", item: "🪖", name: "Шлем", defense: 4, slot: "helmet" },
+  armor:  { price: 500, currency: "coins", item: "🛡️", name: "Броня", defense: 10, slot: "armor" },
+  gloves: { price: 180, currency: "coins", item: "🥊", name: "Перчатки", defense: 3, slot: "gloves" },
+  boots:  { price: 220, currency: "coins", item: "🥾", name: "Сапоги", defense: 3, slot: "boots" }
 });
 
 function utcDay(){ return new Date().toISOString().slice(0,10); }
@@ -119,7 +123,7 @@ export class GameHub extends DurableObject {
   }
 
   async fetch(request){
-    const url=new URL(request.url); if(request.method==="GET"&&url.pathname==="/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.2.0"});
+    const url=new URL(request.url); if(request.method==="GET"&&url.pathname==="/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.3.0",serverShop:true});
     if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);
     let body;try{body=await request.json()}catch{return json({ok:false,error:"Invalid JSON"},400)}
     const auth=await validateTelegramInitData(body.initData,this.env.TELEGRAM_BOT_TOKEN);if(!auth.ok)return json({ok:false,error:auth.error},401);
@@ -137,6 +141,9 @@ export class GameHub extends DurableObject {
       if(action!==ACTIONS.DAILY_CLAIM&&action!==ACTIONS.SHOP_BUY)return json({ok:false,error:"Unsupported action"},400);
       const outcome=await this.action(action,body,user);
       return json(outcome,outcome.ok?200:409);
+    }
+    if(url.pathname==="/shop"){
+      return json({ok:true,version:"G82",currency:"coins",items:Object.entries(SHOP).map(([id,item])=>({id,...item}))});
     }
     return json({ok:false,error:"Not found"},404);
   }
@@ -180,7 +187,7 @@ export class PresenceHub extends DurableObject {
 export default { async fetch(request,env){
   if(request.method==="OPTIONS")return new Response(null,{status:204,headers:{"access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"Content-Type","access-control-max-age":"86400"}});
   const url=new URL(request.url);
-  if(url.pathname==="/api/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.2.0",telegramConfigured:Boolean(env.TELEGRAM_BOT_TOKEN),realtime:true});
+  if(url.pathname==="/api/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.3.0",telegramConfigured:Boolean(env.TELEGRAM_BOT_TOKEN),realtime:true,serverShop:true});
   if(url.pathname==="/telegram/webhook"){
     if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);let update;try{update=await request.json()}catch{return json({ok:false,error:"Invalid JSON"},400)}try{await handleTelegramUpdate(update,env)}catch(e){console.error("Telegram webhook error",e)}return json({ok:true});
   }
@@ -189,6 +196,10 @@ export default { async fetch(request,env){
   }
   if(url.pathname==="/api/telegram-webhook-info"){
     if(!env.TELEGRAM_BOT_TOKEN)return json({ok:false,error:"Telegram token is not configured"},500);const result=await telegramApi("getWebhookInfo",{},env.TELEGRAM_BOT_TOKEN);return json(result,result?.ok?200:502);
+  }
+  if(url.pathname==="/api/shop"){
+    if(request.method!=="GET")return json({ok:false,error:"Method not allowed"},405);
+    return json({ok:true,version:"G82",currency:"coins",items:Object.entries(SHOP).map(([id,item])=>({id,...item}))});
   }
   if(url.pathname==="/api/auth"||url.pathname==="/api/save"||url.pathname==="/api/action"){
     if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);let body;try{body=await request.clone().json()}catch{return json({ok:false,error:"Invalid JSON"},400)}let user;try{const params=new URLSearchParams(body.initData||"");const raw=params.get("user");user=raw?JSON.parse(raw):null}catch{user=null}if(!user||!Number.isSafeInteger(user.id))return json({ok:false,error:"Telegram user is missing"},401);const id=env.GAME_HUB.idFromName(`player:${user.id}`);return env.GAME_HUB.get(id).fetch(request);
