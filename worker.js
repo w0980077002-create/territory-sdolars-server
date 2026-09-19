@@ -304,6 +304,23 @@ async function logs(){const d=await api('/admin/api/logs');$('lb').innerHTML='<d
 </script></body></html>`}
 
 
+/**
+ * Legacy Durable Object compatibility exports.
+ * These classes are kept because wrangler.toml preserves the already-deployed
+ * GameHub / PresenceHub / RoomHub namespaces and migration history.
+ */
+export class GameHub extends DurableObject {
+  async fetch() { return new Response(JSON.stringify({ok:true,hub:"game",legacy:true}), {headers:{"content-type":"application/json"}}); }
+}
+
+export class PresenceHub extends DurableObject {
+  async fetch() { return new Response(JSON.stringify({ok:true,hub:"presence",legacy:true}), {headers:{"content-type":"application/json"}}); }
+}
+
+export class RoomHub extends DurableObject {
+  async fetch() { return new Response(JSON.stringify({ok:true,hub:"room",legacy:true}), {headers:{"content-type":"application/json"}}); }
+}
+
 export class TerritoryDB {
   constructor(ctx, env) {
     this.ctx=ctx; this.env=env; this.sql=ctx.storage.sql; this.ready=false;
