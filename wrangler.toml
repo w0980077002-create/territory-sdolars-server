@@ -3,8 +3,32 @@ main = "worker.js"
 compatibility_date = "2026-09-19"
 
 [[durable_objects.bindings]]
+name = "GAME_HUB"
+class_name = "GameHub"
+
+[[durable_objects.bindings]]
+name = "PRESENCE_HUB"
+class_name = "PresenceHub"
+
+[[durable_objects.bindings]]
+name = "ROOM_HUB"
+class_name = "RoomHub"
+
+[[durable_objects.bindings]]
 name = "DB"
 class_name = "TerritoryDB"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GameHub"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["PresenceHub"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["RoomHub"]
 
 [[migrations]]
 tag = "v4"
