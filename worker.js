@@ -191,6 +191,12 @@ function adminCan(auth, permission) {
 async function bodyJSON(request) {
   try { return await request.json(); } catch { return {}; }
 }
+async function bodyForm(request) {
+  try {
+    const f = await request.formData();
+    return {role:f.get("role"),login:f.get("login"),password:f.get("password")};
+  } catch { return {}; }
+}
 
 async function dbCall(stub, path, method="GET", body=null, headers={}) {
   return stub.fetch(new Request(`https://territory-db${path}`, {
@@ -228,21 +234,24 @@ async function playerFromTelegram(request, env, stub) {
   return p;
 }
 
-function adminHTML() {
+function adminHTML(auth=null) {
+const authed = !!auth;
 return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Territory Admin G91</title>
 <style>body{margin:0;background:#0a1016;color:#edf4f7;font-family:system-ui,-apple-system,sans-serif}header{padding:15px;background:#111b24;position:sticky;top:0;z-index:3;border-bottom:1px solid #263642}main{max-width:1180px;margin:auto;padding:14px}.tabs{display:flex;gap:7px;overflow:auto;margin-bottom:12px}button,input,select,textarea{font:inherit}button{padding:9px 12px;border:1px solid #3b4d59;border-radius:9px;background:#182630;color:#fff;cursor:pointer}button:hover{background:#243640}.danger{background:#632522}.good{background:#24502e}.muted{color:#91a2ab;font-size:12px}.panel{display:none}.panel.active{display:block}.card{background:#111b23;border:1px solid #273742;border-radius:12px;padding:13px;margin:9px 0}.row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:9px}input,select,textarea{box-sizing:border-box;width:100%;padding:9px;background:#0d151c;border:1px solid #394b56;border-radius:8px;color:#fff}table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid #26343d;text-align:left;font-size:13px;vertical-align:top}.click{cursor:pointer}.click:hover{background:#17242c}.pill{display:inline-block;padding:3px 7px;border-radius:999px;background:#24343e;font-size:11px}.modal{position:fixed;inset:0;background:#000b;display:none;align-items:flex-start;justify-content:center;padding:20px;overflow:auto;z-index:10}.modal.show{display:flex}.modalbox{width:min(1050px,100%);background:#101a22;border:1px solid #334752;border-radius:14px;padding:14px}.actions button{margin:3px}.history{max-height:380px;overflow:auto}.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px}.kv div{background:#0c141a;padding:8px;border-radius:8px}.small{font-size:12px}.dangerText{color:#ff8f86}</style></head><body>
-<header><b>⚔️ Territory · G91 Admin</b><span id="status" class="muted"></span></header><main>
-<div id="login" class="card"><h2>Вход в панель</h2><div class="grid">
+<header><b>⚔️ Territory · G91 Admin</b><span id="status" class="muted">${authed ? ` · ${auth.label}: ${auth.login}` : ""}</span></header><main>
+<div id="login" class="card" style="display:${authed ? "none" : "block"}"><h2>Вход в панель</h2><div class="grid">
 <div class="card"><h3>👑 Владелец</h3><p class="muted">Полный доступ. Используется текущий секрет ADMIN_PASSWORD.</p>
-<input id="ownerLogin" value="owner" placeholder="Логин владельца"><br><br>
-<input id="ownerPw" type="password" placeholder="Пароль владельца"><br><br>
-<button type="button" onclick="window.adminLogin('owner')">Войти как владелец</button></div>
+<form method="POST" action="/admin/login" onsubmit="if(window.adminLogin){window.adminLogin('owner',event);return false}">
+<input id="ownerLogin" name="login" value="owner" placeholder="Логин владельца"><br><br>
+<input id="ownerPw" name="password" type="password" placeholder="Пароль владельца"><input type="hidden" name="role" value="owner"><br><br>
+<button type="submit">Войти как владелец</button></form></div>
 <div class="card"><h3>🛡️ Модератор</h3><p class="muted">Роль подготовлена, но пароль в Cloudflare пока не настроен.</p>
-<input id="modLogin" placeholder="Логин модератора"><br><br>
-<input id="modPw" type="password" placeholder="Пароль модератора"><br><br>
-<button type="button" onclick="window.adminLogin('moderator')">Войти как модератор</button></div>
+<form method="POST" action="/admin/login" onsubmit="if(window.adminLogin){window.adminLogin('moderator',event);return false}">
+<input id="modLogin" name="login" placeholder="Логин модератора"><br><br>
+<input id="modPw" name="password" type="password" placeholder="Пароль модератора"><input type="hidden" name="role" value="moderator"><br><br>
+<button type="submit">Войти как модератор</button></form></div>
 </div><span id="msg" class="dangerText"></span></div>
-<div id="app" style="display:none"><div class="tabs">
+<div id="app" style="display:${authed ? "block" : "none"}"><div class="tabs">
 <button data-perm="players" onclick="tab('players')">Игроки</button>
 <button data-perm="finance" onclick="tab('finance')">Финансы</button>
 <button data-perm="prices" onclick="tab('prices')">Магазин</button>
@@ -256,7 +265,8 @@ return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="v
 <script>
 const $=x=>document.getElementById(x);const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(u,o={}){let r=await fetch(u,{...o,headers:{'content-type':'application/json',...(o.headers||{})}});let d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||r.statusText);return d}
-window.adminLogin=async function(role){
+window.adminLogin=async function(role,event){
+  if(event) event.preventDefault();
   try{
     const loginValue=role==='owner'?$('ownerLogin').value.trim():$('modLogin').value.trim();
     const password=role==='owner'?$('ownerPw').value:$('modPw').value;
@@ -748,18 +758,22 @@ export default {
     const stub=env.DB.get(env.DB.idFromName("global"));
 
     try{
-      if(u.pathname==="/admin" && request.method==="GET") return page(adminHTML());
+      if(u.pathname==="/admin" && request.method==="GET"){ const auth=await verifyAdminToken(cookies(request)[ADMIN_COOKIE],env); return page(adminHTML(auth)); }
 
       if(u.pathname==="/admin/login" && request.method==="POST"){
-        const x=await bodyJSON(request),role=s(x.role).toLowerCase();
+        const ct=(request.headers.get("content-type")||"").toLowerCase();
+        const x=ct.includes("application/json") ? await bodyJSON(request) : await bodyForm(request);
+        const role=s(x.role).toLowerCase();
         if(!ADMIN_ROLE_PERMS[role])return json({error:"Unknown role"},400);
         const cfg=adminSecretForRole(env,role);
         if(!cfg.password||!cfg.login)return json({error:"Эта роль пока не настроена в Cloudflare"},503);
         if(!equal(s(x.login),cfg.login)||!equal(s(x.password),cfg.password))return json({error:"Неверный логин или пароль"},401);
         const token=await signedAdminToken(cfg.password,role,cfg.login);
-        return json({ok:true,role,label:ADMIN_ROLE_LABELS[role],login:cfg.login,permissions:ADMIN_ROLE_PERMS[role]},200,{"set-cookie":
-          `${ADMIN_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800`
-        });
+        const cookie=`${ADMIN_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800`;
+        if(!ct.includes("application/json")){
+          return new Response(adminHTML({role,login:cfg.login,label:ADMIN_ROLE_LABELS[role],permissions:ADMIN_ROLE_PERMS[role]}),{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store","set-cookie":cookie}});
+        }
+        return json({ok:true,role,label:ADMIN_ROLE_LABELS[role],login:cfg.login,permissions:ADMIN_ROLE_PERMS[role]},200,{"set-cookie":cookie});
       }
 
       if(u.pathname.startsWith("/admin/api/")){
