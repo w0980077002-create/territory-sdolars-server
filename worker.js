@@ -69,6 +69,8 @@ const ACTIONS = Object.freeze({
   DAILY_CLAIM: "daily_claim",
   SHOP_BUY: "shop_buy"
 });
+const MAX_ACTION_LOG = 100;
+const PROTECTED_FIELDS = ["coins", "gems", "combatStone", "inventory"];
 
 const SHOP = Object.freeze({
   axe:    { price: 150, currency: "coins", item: "🪓", name: "Топор", bonusDamage: 8, slot: "weapon" },
@@ -83,11 +85,16 @@ function utcDay(){ return new Date().toISOString().slice(0,10); }
 function result(ok, extra={}){ return { ok, ...extra }; }
 
 export class GameHub extends DurableObject {
-  constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;this.ctx.blockConcurrencyWhile(async()=>{this.ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS player (player_id TEXT PRIMARY KEY,name TEXT NOT NULL,username TEXT,photo_url TEXT,state_json TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)`);});}
+  constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;this.ctx.blockConcurrencyWhile(async()=>{this.ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS player (player_id TEXT PRIMARY KEY,name TEXT NOT NULL,username TEXT,photo_url TEXT,state_json TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS action_log (action_id TEXT PRIMARY KEY, player_id TEXT NOT NULL, action TEXT NOT NULL, response_json TEXT NOT NULL, created_at INTEGER NOT NULL)`);});}
   getPlayer(){return this.ctx.storage.sql.exec(`SELECT player_id,name,username,photo_url,state_json,created_at,updated_at FROM player LIMIT 1`).one();}
   savePlayer(p){this.ctx.storage.sql.exec(`INSERT INTO player (player_id,name,username,photo_url,state_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(player_id) DO UPDATE SET name=excluded.name,username=excluded.username,photo_url=excluded.photo_url,state_json=excluded.state_json,updated_at=excluded.updated_at`,p.playerId,p.name,p.username||null,p.photoUrl||null,JSON.stringify(p.state),p.createdAt,p.updatedAt);}
 
+  getAction(actionId){if(!actionId)return null;try{const row=this.ctx.storage.sql.exec(`SELECT response_json FROM action_log WHERE action_id=? LIMIT 1`,String(actionId)).one();return row?JSON.parse(row.response_json):null}catch{return null}}
+  saveAction(actionId,playerId,action,response){if(!actionId)return;try{this.ctx.storage.sql.exec(`INSERT OR REPLACE INTO action_log(action_id,player_id,action,response_json,created_at) VALUES(?,?,?,?,?)`,String(actionId),String(playerId),String(action),JSON.stringify(response),Date.now());this.ctx.storage.sql.exec(`DELETE FROM action_log WHERE rowid NOT IN (SELECT rowid FROM action_log ORDER BY created_at DESC LIMIT ?)`,MAX_ACTION_LOG)}catch{}}
   async action(action, body, user){
+    const actionId=String(body?.actionId||"").slice(0,120);
+    const replay=this.getAction(actionId);
+    if(replay)return {...replay,replayed:true};
     const player=this.getPlayer();
     const state=player ? JSON.parse(player.state_json) : cloneDefaultState();
     const now=Date.now();
@@ -103,7 +110,7 @@ export class GameHub extends DurableObject {
       state.serverDailyStreak=streak;
       state.serverDailyStreakDay=day;
       this.savePlayer({playerId:String(user.id),name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:player?.created_at||now,updatedAt:now});
-      return result(true,{action,coins,combatStone:5,streak,state,savedAt:now});
+      const response=result(true,{action,coins,combatStone:5,streak,state,savedAt:now});this.saveAction(actionId,String(user.id),action,response);return response;
     }
 
     if(action===ACTIONS.SHOP_BUY){
@@ -116,14 +123,14 @@ export class GameHub extends DurableObject {
       state.inventory=Array.isArray(state.inventory)?state.inventory.slice(0,199):[];
       state.inventory.push(item.item);
       this.savePlayer({playerId:String(user.id),name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:player?.created_at||now,updatedAt:now});
-      return result(true,{action,itemId,price:item.price,currency:item.currency,item:item.item,state,savedAt:now});
+      const response=result(true,{action,itemId,price:item.price,currency:item.currency,item:item.item,state,savedAt:now});this.saveAction(actionId,String(user.id),action,response);return response;
     }
 
     return result(false,{error:"Unsupported action",state});
   }
 
   async fetch(request){
-    const url=new URL(request.url); if(request.method==="GET"&&url.pathname==="/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.3.0",serverShop:true});
+    const url=new URL(request.url); if(request.method==="GET"&&url.pathname==="/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.4.0",serverShop:true});
     if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);
     let body;try{body=await request.json()}catch{return json({ok:false,error:"Invalid JSON"},400)}
     const auth=await validateTelegramInitData(body.initData,this.env.TELEGRAM_BOT_TOKEN);if(!auth.ok)return json({ok:false,error:auth.error},401);
@@ -133,17 +140,23 @@ export class GameHub extends DurableObject {
       return json({ok:true,created:false,user:{id:playerId,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null},state:JSON.parse(existing.state_json)});
     }
     if(url.pathname==="/save"){
-      const state=normalizeState(body.state),stateJson=JSON.stringify(state);if(new TextEncoder().encode(stateJson).byteLength>MAX_STATE_BYTES)return json({ok:false,error:"State is too large"},413);
-      const existing=this.getPlayer();this.savePlayer({playerId,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:existing?.created_at||now,updatedAt:now});return json({ok:true,savedAt:now,state});
+      const incoming=normalizeState(body.state);
+      const existing=this.getPlayer();
+      const existingState=existing?JSON.parse(existing.state_json):cloneDefaultState();
+      for(const key of PROTECTED_FIELDS){if(Object.prototype.hasOwnProperty.call(existingState,key))incoming[key]=existingState[key];}
+      const state=incoming,stateJson=JSON.stringify(state);
+      if(new TextEncoder().encode(stateJson).byteLength>MAX_STATE_BYTES)return json({ok:false,error:"State is too large"},413);
+      this.savePlayer({playerId,name:displayName(user),username:user.username||null,photoUrl:user.photo_url||null,state,createdAt:existing?.created_at||now,updatedAt:now});return json({ok:true,savedAt:now,state});
     }
     if(url.pathname==="/action"){
+      if(typeof body.actionId!=="string"||!body.actionId)return json({ok:false,error:"Missing actionId"},400);
       const action=typeof body.action==="string"?body.action:"";
       if(action!==ACTIONS.DAILY_CLAIM&&action!==ACTIONS.SHOP_BUY)return json({ok:false,error:"Unsupported action"},400);
       const outcome=await this.action(action,body,user);
       return json(outcome,outcome.ok?200:409);
     }
     if(url.pathname==="/shop"){
-      return json({ok:true,version:"G82",currency:"coins",items:Object.entries(SHOP).map(([id,item])=>({id,...item}))});
+      return json({ok:true,version:"G83",currency:"coins",items:Object.entries(SHOP).map(([id,item])=>({id,...item}))});
     }
     return json({ok:false,error:"Not found"},404);
   }
@@ -187,7 +200,7 @@ export class PresenceHub extends DurableObject {
 export default { async fetch(request,env){
   if(request.method==="OPTIONS")return new Response(null,{status:204,headers:{"access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"Content-Type","access-control-max-age":"86400"}});
   const url=new URL(request.url);
-  if(url.pathname==="/api/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.3.0",telegramConfigured:Boolean(env.TELEGRAM_BOT_TOKEN),realtime:true,serverShop:true});
+  if(url.pathname==="/api/health")return json({ok:true,service:"Territory Sdolars Server",version:"1.4.0",telegramConfigured:Boolean(env.TELEGRAM_BOT_TOKEN),realtime:true,serverShop:true});
   if(url.pathname==="/telegram/webhook"){
     if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);let update;try{update=await request.json()}catch{return json({ok:false,error:"Invalid JSON"},400)}try{await handleTelegramUpdate(update,env)}catch(e){console.error("Telegram webhook error",e)}return json({ok:true});
   }
@@ -199,7 +212,7 @@ export default { async fetch(request,env){
   }
   if(url.pathname==="/api/shop"){
     if(request.method!=="GET")return json({ok:false,error:"Method not allowed"},405);
-    return json({ok:true,version:"G82",currency:"coins",items:Object.entries(SHOP).map(([id,item])=>({id,...item}))});
+    return json({ok:true,version:"G83",currency:"coins",items:Object.entries(SHOP).map(([id,item])=>({id,...item}))});
   }
   if(url.pathname==="/api/auth"||url.pathname==="/api/save"||url.pathname==="/api/action"){
     if(request.method!=="POST")return json({ok:false,error:"Method not allowed"},405);let body;try{body=await request.clone().json()}catch{return json({ok:false,error:"Invalid JSON"},400)}let user;try{const params=new URLSearchParams(body.initData||"");const raw=params.get("user");user=raw?JSON.parse(raw):null}catch{user=null}if(!user||!Number.isSafeInteger(user.id))return json({ok:false,error:"Telegram user is missing"},401);const id=env.GAME_HUB.idFromName(`player:${user.id}`);return env.GAME_HUB.get(id).fetch(request);
