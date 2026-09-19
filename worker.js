@@ -212,17 +212,11 @@ async function logs(){const d=await api('/admin/api/logs');$('lb').innerHTML='<d
 </script></body></html>`}
 
 
-// Legacy Durable Object exports kept for Cloudflare compatibility.
-// These classes were deployed in migrations v1-v3 and must remain exported.
-export class GameHub extends DurableObject {
-  async fetch() { return new Response("Legacy GameHub", {status: 410}); }
-}
-export class PresenceHub extends DurableObject {
-  async fetch() { return new Response("Legacy PresenceHub", {status: 410}); }
-}
-export class RoomHub extends DurableObject {
-  async fetch() { return new Response("Legacy RoomHub", {status: 410}); }
-}
+// Compatibility exports for Durable Object namespaces created by older server versions.
+// Keep these classes exported so existing GameHub/PresenceHub/RoomHub namespaces remain valid.
+export class GameHub extends DurableObject {}
+export class PresenceHub extends DurableObject {}
+export class RoomHub extends DurableObject {}
 
 export class TerritoryDB {
   constructor(ctx, env) {
