@@ -216,15 +216,14 @@ async function dbJSON(stub, path, method="GET", body=null) {
 }
 
 async function playerFromTelegram(request, env, stub) {
-  // G107: accept Telegram initData from the existing G76 JSON body
-  // as well as the secure x-telegram-init-data header.
-  // request.clone() preserves the original body for the route handler.
+  // Accept Telegram initData from the preferred header and from JSON body.
+  // clone() keeps the original request body available to later route handlers.
   let initData = request.headers.get("x-telegram-init-data") || "";
-  if (!initData && request.method !== "GET") {
+  if (!initData) {
     try {
-      const x = await request.clone().json();
-      initData = String(x?.initData || "");
-    } catch (_) {}
+      const body = await request.clone().json();
+      initData = String(body?.initData || "");
+    } catch {}
   }
   if (!initData) throw new Response(JSON.stringify({error:"Authentication required"}),{
     status:401,headers:{"content-type":"application/json"}
@@ -715,44 +714,6 @@ export class TerritoryDB extends DurableObject {
   async fetch(request){
     const u=new URL(request.url);
     try{
-      if(u.pathname==="/db/test-admin-query"){
-        try {
-          this.init();
-          const q = "%";
-          const lim = 50, off = 0;
-          const sql = `SELECT telegram_id AS id,username,first_name,last_name,level,coins,gems,banned,ban_reason,updated_at,created_at FROM players WHERE username LIKE ? OR first_name LIKE ? OR telegram_id LIKE ? ORDER BY updated_at DESC LIMIT ? OFFSET ?`;
-          const rows = this.sql.exec(sql,q,q,q,lim,off).toArray();
-          let safeRows = [];
-          try { safeRows = JSON.parse(JSON.stringify(rows, (k,v)=>typeof v === "bigint" ? Number(v) : v)); } catch(e) {}
-          const totalRow = this.sql.exec(`SELECT COUNT(*) total FROM players WHERE username LIKE ? OR first_name LIKE ? OR telegram_id LIKE ?`,q,q,q).toArray()[0] || {};
-          const total = Number(totalRow.total ?? 0);
-          return json({ok:true,diagnostic:"admin-query",rows_count:rows.length,total,rows:safeRows});
-        } catch(e) {
-          return json({ok:false,diagnostic:"admin-query",error:String(e?.message||e),stack:String(e?.stack||"")},500);
-        }
-      }
-      if(u.pathname==="/db/test-simple"){
-        try {
-          this.init();
-          const info=this.sql.exec("PRAGMA table_info(players)").toArray();
-          const names=info.map(x=>String(x.name));
-          const required=["telegram_id","username","first_name","last_name","level","coins","gems","banned","ban_reason","updated_at","created_at"];
-          const missing=required.filter(k=>!names.includes(k));
-          let count=null, countError="";
-          try { count=Number(this.sql.exec("SELECT COUNT(*) AS total FROM players").toArray()[0]?.total ?? 0); } catch(e) { countError=String(e?.message||e); }
-          let selectOk=false, selectError="", sampleCount=0;
-          if(!countError){
-            try {
-              const rows=this.sql.exec("SELECT telegram_id,username,first_name,last_name,level,coins,gems,banned,ban_reason,updated_at,created_at FROM players ORDER BY updated_at DESC LIMIT 50").toArray();
-              sampleCount=rows.length;
-              selectOk=true;
-            } catch(e) { selectError=String(e?.message||e); }
-          }
-          return json({ok:!missing.length&&!countError&&selectOk,diagnostic:"players-query-simple",columns:names,missing,count,count_error:countError,select_ok:selectOk,select_error:selectError,sample_count:sampleCount});
-        } catch(e) {
-          return json({ok:false,diagnostic:"players-query-simple",error:String(e?.message||e),stage:"init-or-schema"},500);
-        }
-      }
       if(u.pathname==="/db/health"){
         this.init();
         const tables=this.sql.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").toArray();
@@ -798,18 +759,18 @@ export default {
 
     try{
       if(u.pathname==="/admin/health" && request.method==="GET"){
-        return json({ok:true,service:"admin",version:"G101"},200,{"cache-control":"no-store","x-territory-build":"G101"});
+        return json({ok:true,service:"admin",version:"G98"},200,{"cache-control":"no-store","x-territory-build":"G98"});
       }
       // Admin login is deliberately handled before the Durable Object lookup.
       // This keeps the login page independent from the game database and makes
       // the native HTML form work even when browser JavaScript is unavailable.
       if(u.pathname==="/admin/app.js" && request.method==="GET"){
-        return new Response(ADMIN_APP_JS,{status:200,headers:{"content-type":"text/javascript; charset=utf-8","cache-control":"no-store","x-territory-build":"G101"}});
+        return new Response(ADMIN_APP_JS,{status:200,headers:{"content-type":"text/javascript; charset=utf-8","cache-control":"no-store","x-territory-build":"G98"}});
       }
 
       if(u.pathname==="/admin" && request.method==="GET"){
         const auth=await verifyAdminToken(cookies(request)[ADMIN_COOKIE],env);
-        return new Response(adminHTML(auth),{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store","x-territory-build":"G101"}});
+        return new Response(adminHTML(auth),{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store","x-territory-build":"G98"}});
       }
 
       if(u.pathname==="/admin/login" && request.method==="POST"){
@@ -828,37 +789,15 @@ export default {
         return json({ok:true,role,label:ADMIN_ROLE_LABELS[role],login:cfg.login,permissions:ADMIN_ROLE_PERMS[role]},200,{"set-cookie":cookie});
       }
 
-      if(u.pathname==="/admin/db-test-admin-query" && request.method==="GET"){
-        try{
-          const stub=env.DB.get(env.DB.idFromName("global"));
-          const r=await dbCall(stub,"/db/test-admin-query");
-          const text=await r.text();
-          return new Response(text,{status:r.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-territory-build":"G101"}});
-        }catch(e){
-          return json({ok:false,error:String(e?.message||e),stage:"worker-call"},500,{"cache-control":"no-store","x-territory-build":"G101"});
-        }
-      }
-
-      if(u.pathname==="/admin/db-test-simple" && request.method==="GET"){
-        try{
-          const stub=env.DB.get(env.DB.idFromName("global"));
-          const r=await dbCall(stub,"/db/test-simple");
-          const text=await r.text();
-          return new Response(text,{status:r.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-territory-build":"G101"}});
-        }catch(e){
-          return json({ok:false,error:String(e?.message||e),stage:"worker-call"},500,{"cache-control":"no-store","x-territory-build":"G101"});
-        }
-      }
-
       if(u.pathname==="/admin/db-health" && request.method==="GET"){
         // Temporary diagnostic endpoint: intentionally public so the browser can
         // show the exact SQLite/DO initialization error without an admin cookie.
         try{
           const stub=env.DB.get(env.DB.idFromName("global"));
           const result=await dbJSON(stub,"/db/health");
-          return json({ok:true,diagnostic:"db-health",...result},200,{"cache-control":"no-store","x-territory-build":"G101"});
+          return json({ok:true,diagnostic:"db-health",...result},200,{"cache-control":"no-store","x-territory-build":"G98"});
         }catch(e){
-          return json({ok:false,diagnostic:"db-health",error:e?.message||String(e),stack:e?.stack||""},500,{"cache-control":"no-store","x-territory-build":"G101"});
+          return json({ok:false,diagnostic:"db-health",error:e?.message||String(e),stack:e?.stack||""},500,{"cache-control":"no-store","x-territory-build":"G98"});
         }
       }
 
