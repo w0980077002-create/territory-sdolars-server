@@ -216,7 +216,16 @@ async function dbJSON(stub, path, method="GET", body=null) {
 }
 
 async function playerFromTelegram(request, env, stub) {
-  const initData = request.headers.get("x-telegram-init-data") || "";
+  // G107: accept Telegram initData from the existing G76 JSON body
+  // as well as the secure x-telegram-init-data header.
+  // request.clone() preserves the original body for the route handler.
+  let initData = request.headers.get("x-telegram-init-data") || "";
+  if (!initData && request.method !== "GET") {
+    try {
+      const x = await request.clone().json();
+      initData = String(x?.initData || "");
+    } catch (_) {}
+  }
   if (!initData) throw new Response(JSON.stringify({error:"Authentication required"}),{
     status:401,headers:{"content-type":"application/json"}
   });
