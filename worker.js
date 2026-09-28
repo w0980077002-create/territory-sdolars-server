@@ -39,6 +39,9 @@ const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(d
   headers: {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "access-control-allow-headers": "content-type,x-telegram-init-data",
     ...headers
   }
 });
@@ -544,6 +547,12 @@ export class TerritoryDB extends DurableObject {
         xp INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY(room_id,telegram_id)
       );
+      CREATE TABLE IF NOT EXISTS player_state(
+        telegram_id TEXT PRIMARY KEY,
+        state_json TEXT NOT NULL DEFAULT '{}',
+        schema_version INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL DEFAULT 0
+      );
     `);
 
     const ensure = (table, defs) => {
@@ -579,6 +588,7 @@ export class TerritoryDB extends DurableObject {
       CREATE INDEX IF NOT EXISTS idx_ledger_player ON economy_ledger(telegram_id,created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_arena_reward_player ON arena_reward_claims(telegram_id,created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_admin_audit_player ON admin_audit(telegram_id,created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_player_state_updated ON player_state(updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_mail ON player_mail(telegram_id,claimed,created_at);
       CREATE INDEX IF NOT EXISTS idx_score ON daily_scores(day,score DESC);
       CREATE INDEX IF NOT EXISTS idx_players_username ON players(username);
@@ -613,6 +623,91 @@ export class TerritoryDB extends DurableObject {
       id,s(user.username),s(user.first_name),s(user.last_name),s(user.photo_url),t,t);
     this.event(id,'Auth','login','Telegram WebApp authentication');
     return this.player(id);
+  }
+
+  state(id){
+    this.init();
+    const p=this.player(id);
+    const row=this.sql.exec(
+      "SELECT state_json,schema_version,updated_at FROM player_state WHERE telegram_id=? LIMIT 1",
+      id
+    ).toArray()[0];
+
+    if(!row) return {ok:true,state:null,player:p};
+
+    let state={};
+    try { state=JSON.parse(row.state_json||"{}"); } catch { state={}; }
+    if(!state || typeof state!=="object" || Array.isArray(state)) state={};
+
+    // These base fields remain server-authoritative and are never accepted
+    // from the full client snapshot.
+    if(p){
+      state.level=n(p.level,1);
+      state.xp=n(p.exp,0);
+      state.exp=n(p.exp,0);
+      state.coins=n(p.coins,0);
+      state.gems=n(p.gems,0);
+      state.hp=n(p.hp,0);
+      state.maxHp=n(p.max_hp,0);
+      state.strength=n(p.strength,0);
+      state.agility=n(p.agility,0);
+      state.defense=n(p.defense,0);
+      state.weapon=s(p.weapon);
+    }
+
+    return {
+      ok:true,
+      state,
+      schema_version:n(row.schema_version,1),
+      updated_at:n(row.updated_at,0),
+      player:p
+    };
+  }
+
+  saveState(id,rawState){
+    this.init();
+    const p=this.player(id);
+    if(!p) throw Error("Player not found");
+
+    const source=rawState && typeof rawState==="object" ? rawState : {};
+    let state;
+    try { state=JSON.parse(JSON.stringify(source)); }
+    catch { throw Error("Invalid state"); }
+
+    if(!state || typeof state!=="object" || Array.isArray(state)){
+      throw Error("Invalid state");
+    }
+
+    const size=JSON.stringify(state).length;
+    if(size>1024*1024) throw Error("State payload too large");
+
+    // Do not trust economic/progression base fields from the snapshot.
+    state.level=n(p.level,1);
+    state.xp=n(p.exp,0);
+    state.exp=n(p.exp,0);
+    state.coins=n(p.coins,0);
+    state.gems=n(p.gems,0);
+    state.hp=n(p.hp,0);
+    state.maxHp=n(p.max_hp,0);
+    state.strength=n(p.strength,0);
+    state.agility=n(p.agility,0);
+    state.defense=n(p.defense,0);
+    state.weapon=s(p.weapon);
+
+    const payload=JSON.stringify(state);
+    const ts=Date.now();
+
+    this.sql.exec(
+      `INSERT INTO player_state(telegram_id,state_json,schema_version,updated_at)
+       VALUES(?,?,?,?)
+       ON CONFLICT(telegram_id) DO UPDATE SET
+       state_json=excluded.state_json,
+       schema_version=excluded.schema_version,
+       updated_at=excluded.updated_at`,
+      id,payload,1,ts
+    );
+
+    return {ok:true,state,updated_at:ts};
   }
 
   progress(id,p){
@@ -948,6 +1043,11 @@ export class TerritoryDB extends DurableObject {
       const b=()=>bodyJSON(request);
       if(u.pathname==="/db/upsert"){const x=await b();return json(this.upsert(x.user));}
       if(u.pathname==="/db/player"){return json(this.player(u.searchParams.get("id")||""));}
+      if(u.pathname==="/db/state"){
+        if(request.method==="GET") return json(this.state(u.searchParams.get("id")||""));
+        const x=await b();
+        return json(this.saveState(x.id,x.state));
+      }
       if(u.pathname==="/db/progress"){const x=await b();return json(this.progress(x.id,x.patch||{}));}
       if(u.pathname==="/db/shop"){return json(this.catalog());}
       if(u.pathname==="/db/buy"){const x=await b();return json(this.buy(x.id,x.item_id));}
@@ -1019,6 +1119,15 @@ async function telegramWebhookUpdate(env, update) {
 export default {
   async fetch(request,env,ctx){
     const u=new URL(request.url);
+
+    if(request.method==="OPTIONS"){
+      return new Response(null,{status:204,headers:{
+        "access-control-allow-origin":"*",
+        "access-control-allow-methods":"GET,POST,OPTIONS",
+        "access-control-allow-headers":"content-type,x-telegram-init-data",
+        "access-control-max-age":"86400"
+      }});
+    }
 
     try{
       if(u.pathname==="/api/setup-telegram-webhook" && request.method==="GET"){
@@ -1234,6 +1343,15 @@ export default {
       });
 
       if(u.pathname==="/api/me")return json({player:p});
+
+      if(u.pathname==="/api/state" && request.method==="GET"){
+        return json(await dbJSON(stub,"/db/state?id="+encodeURIComponent(id)));
+      }
+
+      if(u.pathname==="/api/state" && request.method==="POST"){
+        const x=await bodyJSON(request);
+        return json(await dbJSON(stub,"/db/state","POST",{id,state:x.state}));
+      }
 
       if(u.pathname==="/api/progress" && request.method==="POST"){
         const x=await bodyJSON(request),patch={};
