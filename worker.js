@@ -99,7 +99,8 @@ const ADMIN_APP_JS = [
   "));\n        if(action==='adjust') return adjust(btn.dataset.kind);\n        if(action==='gift') return giftPlayer();\n        if(action==='ban') return toggleBan(Number(btn.dataset.banned));\n        if(action==='price') return price(btn.dataset.itemId);\n        if(action==='close-modal') return closeModal();\n        if(action==='broadcast') return sendBroadcast();\n        if(action==='save-arena-bot",
   "s') return saveArenaBots();\n      } catch(err) { alert(err.message || String(err)); }\n    });\n    $('pb')?.addEventListener('click', e => {\n      if(e.target.closest('[data-action]')) return;\n      const row=e.target.closest('[data-player-id]');\n      if(row) openPlayer(row.dataset.playerId);\n    });\n  }\n\n  function boot() {\n    document.documentElement.dataset.territoryAdminJs='G120';\n    bindEve",
   "nts();\n    const app=$('app');\n    if(app && app.style.display !== 'none') loadPlayers();\n  }\n\n  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, {once:true}); else boot();\n})();",
-].join("");(request) {
+].join("");
+function cookies(request) {
   const out = {};
   for (const part of (request.headers.get("cookie") || "").split(";")) {
     const i = part.indexOf("=");
