@@ -1,5 +1,4 @@
 'use strict';
-// FOUNDATION-COMPLETE: server-only economy mutation.
 const crypto=require('crypto');
 const LIMITS=Object.freeze({coins:100000000000,gems:1000000000,red_gems:1000000000});
 const CURRENCIES=Object.keys(LIMITS);

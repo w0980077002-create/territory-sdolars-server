@@ -1,9 +1,1 @@
-{
-  "name":"territory-sdolars-server",
-  "version":"2.0.0",
-  "private":true,
-  "description":"Territory canonical player/auth/economy/PvE authority server — Foundation Complete 01",
-  "main":"server.js",
-  "scripts":{"start":"node server.js","test":"node test-economy-ledger.js"},
-  "engines":{"node":">=18"}
-}
+{"name":"territory-sdolars-server","version":"2.4.0","private":true,"description":"Territory authoritative Telegram player, economy and PvE progression server","main":"server.js","scripts":{"start":"node server.js","test":"node test-economy-ledger.js"},"engines":{"node":">=18"}}
