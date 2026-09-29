@@ -1,0 +1,25 @@
+name = "territory-sdolars-server"
+main = "worker.js"
+compatibility_date = "2026-09-19"
+
+[[durable_objects.bindings]]
+name = "DB"
+class_name = "TerritoryDB"
+
+[[durable_objects.bindings]]
+name = "ARENA_HUB"
+class_name = "RoomHub"
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["TerritoryDB"]
+
+[[migrations]]
+tag = "v5"
+new_classes = ["RoomHub"]
+
+[triggers]
+crons = ["0 3 * * *"]
+
+[observability]
+enabled = true
