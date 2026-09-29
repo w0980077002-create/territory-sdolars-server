@@ -1,5 +1,8 @@
-1. Замени worker.js в Cloudflare Worker `territory-sdolars-server`.
-2. wrangler.toml можно оставить текущим; миграции не добавляются.
-3. Secrets/BOT_TOKEN/ADMIN_PASSWORD не менять.
-4. После deploy проверить /admin/health и /api/economy из авторизованного клиента.
-5. Production deployment этим пакетом автоматически НЕ выполняется.
+TERRITORY CLOUDFLARE G125
+
+Replace worker.js, wrangler.toml, README.md, PASS55-manifest.json in the existing Worker project.
+Do not change Cloudflare secrets.
+Do not remove existing Durable Object migrations.
+Production deployment was NOT performed by ChatGPT.
+
+New: level/exp are server-owned; use POST /api/xp/award with a unique reference.
