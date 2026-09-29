@@ -10,6 +10,8 @@ class_name = "TerritoryDB"
 name = "ARENA_HUB"
 class_name = "RoomHubSQLite"
 
+# Existing legacy Durable Object namespaces.
+# Their storage backend is immutable and must remain legacy-kv.
 [exports.GameHub]
 type = "durable-object"
 storage = "legacy-kv"
@@ -18,16 +20,16 @@ storage = "legacy-kv"
 type = "durable-object"
 storage = "legacy-kv"
 
-# RoomHub was provisioned as SQLite by the earlier v5 migration.
-# Its storage type is immutable, so keep the existing namespace as SQLite.
 [exports.RoomHub]
 type = "durable-object"
-storage = "sqlite"
+storage = "legacy-kv"
 
+# SQLite-backed database.
 [exports.TerritoryDB]
 type = "durable-object"
 storage = "sqlite"
 
+# New Arena namespace used by ARENA_HUB.
 [exports.RoomHubSQLite]
 type = "durable-object"
 storage = "sqlite"
