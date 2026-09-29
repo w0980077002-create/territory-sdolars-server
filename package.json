@@ -1,0 +1,11 @@
+{
+  "name": "territory-sdolars-server",
+  "private": true,
+  "devDependencies": {
+    "wrangler": "4.143.0"
+  },
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "check": "node --check worker.js"
+  }
+}

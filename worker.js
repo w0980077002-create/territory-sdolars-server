@@ -381,7 +381,7 @@ function makeHuman(id,name,level,team){
 function publicRoom(r){return {id:r.id,mode:r.mode,createdAt:r.createdAt,endsAt:r.endsAt,round:r.round,log:r.log.slice(-30),result:r.result,
  players:r.players.map(p=>({id:p.id,name:p.name,level:p.level,bot:!!p.bot,team:p.team,role:p.roleTitle||"",hp:p.hp,maxHp:p.maxHp,defeated:!!p.defeated,left:!!p.left}))};}
 
-export class RoomHubV2 extends DurableObject{
+export class RoomHub extends DurableObject{
  constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;this.sockets=new Map();}
  async state(){let s=await this.ctx.storage.get("arena");if(!s)s={config:arenaDefaultConfig(),queues:{duel:[],group:[],chaos:[]},rooms:{},left:{},recent:[]};
   s.config={...arenaDefaultConfig(),...(s.config||{})};s.queues=s.queues||{duel:[],group:[],chaos:[]}; s.queues.chaos=s.queues.chaos||[];s.rooms=s.rooms||{};s.left=s.left||{};s.recent=s.recent||[];
@@ -1435,3 +1435,4 @@ export default {
     ctx.waitUntil(dbJSON(stub,"/db/tournament","POST",{day:previous}));
   }
 };
+

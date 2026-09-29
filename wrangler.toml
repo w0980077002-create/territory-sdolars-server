@@ -8,7 +8,7 @@ class_name = "TerritoryDB"
 
 [[durable_objects.bindings]]
 name = "ARENA_HUB"
-class_name = "RoomHubV2"
+class_name = "RoomHub"
 
 [[migrations]]
 tag = "v4"
@@ -16,11 +16,7 @@ new_sqlite_classes = ["TerritoryDB"]
 
 [[migrations]]
 tag = "v5"
-new_sqlite_classes = ["RoomHub"]
-
-[[migrations]]
-tag = "v6"
-new_sqlite_classes = ["RoomHubV2"]
+new_classes = ["RoomHub"]
 
 [triggers]
 crons = ["0 3 * * *"]
