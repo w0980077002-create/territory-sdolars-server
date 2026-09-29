@@ -34,18 +34,21 @@ const MIN_ACTION_MS = 150;
 const ARENA_TURN_TIMEOUT_MS = 45000;
 const ARENA_MAX_ACTION_CACHE = 64;
 
+const corsHeaders = () => ({"access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"content-type,x-telegram-init-data","access-control-max-age":"86400","vary":"Origin"});
+
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
   status,
   headers: {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
+    ...corsHeaders(),
     ...headers
   }
 });
 
 const page = (body, status = 200) => new Response(body, {
   status,
-  headers: {"content-type":"text/html; charset=utf-8","cache-control":"no-store"}
+  headers: {"content-type":"text/html; charset=utf-8","cache-control":"no-store",...corsHeaders()}
 });
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -71,7 +74,7 @@ const ADMIN_APP_JS = "(() => {\n  const $ = x => document.getElementById(x);\n  
     $('abResult').textContent=' · сохранено'; setTimeout(()=>{if($('abResult'))$('abResult').textContent=''},2000);
     loadArenaBots();
   }
-\n\n  function openById() { const id = $('q')?.value.trim(); if (id) openPlayer(id); }\n  window.openById = openById;\n\n  async function loadPlayers(offset = 0) {\n    try {\n      const q = $('q')?.value.replace(/^@/, '') || '';\n      const d = await api('/admin/api/players?q='+encodeURIComponent(q)+'&offset='+offset);\n      let h = '<div class=\"card\"><span class=\"muted\">Найдено: '+d.total+'</span></div><div class=\"card\"><table><tr><th>Telegram ID</th><th>Игрок</th><th>Ур.</th><th>Монеты</th><th>Кристаллы</th><th>Статус</th><th></th></tr>';\n      for (const p of d.rows) {\n        h += '<tr class=\"click\" data-player-id=\"'+esc(p.id)+'\"><td>'+esc(p.id)+'</td><td>'+esc(p.first_name || p.username || '')+'<br><span class=\"muted\">@'+esc(p.username || '')+'</span></td><td>'+p.level+'</td><td>'+p.coins+'</td><td>'+p.gems+'</td><td>'+(p.banned?'<span class=\"pill dangerText\">BAN</span>':'<span class=\"pill\">OK</span>')+'</td><td><button type=\"button\" data-action=\"open-player\" data-player-id=\"'+esc(p.id)+'\">Открыть</button></td></tr>';\n      }\n      h += '</table></div><div class=\"row\">';\n      if (d.offset > 0) h += '<button type=\"button\" data-action=\"players-page\" data-offset=\"'+Math.max(0,d.offset-d.limit)+'\">← Назад</button>';\n      if (d.offset + d.limit < d.total) h += '<button type=\"button\" data-action=\"players-page\" data-offset=\"'+(d.offset+d.limit)+'\">Далее →</button>';\n      h += '</div>';\n      $('pb').innerHTML = h;\n    } catch (e) { errorBox('pb', e); }\n  }\n  window.loadPlayers = loadPlayers;\n\n  async function openPlayer(id) {\n    try {\n      const d = await api('/admin/api/player/'+encodeURIComponent(id));\n      if (!d) { alert('Игрок не найден'); return; }\n      $('mt').textContent = 'Игрок ' + id;\n      renderPlayer(d);\n      $('modal').classList.add('show');\n    } catch (e) { alert(e.message); }\n  }\n  window.openPlayer = openPlayer;\n\n  function renderPlayer(d) {\n    const p = d.player;\n    let h = '<div class=\"grid\"><div class=\"card\"><h3>Профиль</h3><div class=\"kv\"><div>ID<br><b>'+esc(p.telegram_id)+'</b></div><div>Имя<br><b>'+esc(p.first_name)+' '+esc(p.last_name)+'</b></div><div>Username<br><b>@'+esc(p.username)+'</b></div><div>Уровень<br><b>'+p.level+'</b></div><div>XP<br><b>'+p.exp+'</b></div><div>Статус<br><b>'+(p.banned?'BAN':'Активен')+'</b></div><div>Монеты<br><b>'+p.coins+'</b></div><div>Кристаллы<br><b>'+p.gems+'</b></div></div></div>';\n    h += '<div class=\"card\"><h3>Управление</h3><div class=\"actions\"><button type=\"button\" data-action=\"adjust\" data-kind=\"coins\">Монеты ±</button><button type=\"button\" data-action=\"adjust\" data-kind=\"gems\">Кристаллы ±</button><button type=\"button\" data-action=\"adjust\" data-kind=\"exp\">XP ±</button><button type=\"button\" data-action=\"adjust\" data-kind=\"level\">Уровень</button><button type=\"button\" data-action=\"adjust\" data-kind=\"hp\">HP ±</button><button type=\"button\" data-action=\"gift\">Подарок в почту</button><button type=\"button\" class=\"'+(p.banned?'good':'danger')+'\" data-action=\"ban\" data-banned=\"'+(p.banned?0:1)+'\">'+(p.banned?'Разбан':'Бан')+'</button></div></div></div>';\n    h += '<div class=\"card\"><h3>Инвентарь</h3><table><tr><th>Предмет</th><th>Количество</th></tr>'+(d.inventory.length?d.inventory.map(x=>'<tr><td>'+esc(x.icon)+' '+esc(x.name)+'</td><td>'+x.quantity+'</td></tr>').join(''):'<tr><td colspan=\"2\" class=\"muted\">Пусто</td></tr>')+'</table></div>';\n    h += '<div class=\"card\"><h3>История действий</h3><div class=\"row\"><select id=\"hf\"><option value=\"\">Все</option><option>Admin</option><option>Shop</option><option>Mail</option><option>Arena</option><option>Anti-cheat</option><option>Auth</option><option>Tournament</option></select></div><div id=\"hist\" class=\"history\"></div></div>';\n    h += '<div class=\"card\"><h3>Экономика</h3><table><tr><th>Валюта</th><th>Изменение</th><th>До</th><th>После</th><th>Причина</th></tr>'+d.ledger.map(x=>'<tr><td>'+esc(x.currency)+'</td><td>'+x.amount+'</td><td>'+x.balance_before+'</td><td>'+x.balance_after+'</td><td>'+esc(x.reason)+'</td></tr>').join('')+'</table></div>';\n    h += '<div class=\"card\"><h3>Почта</h3><table><tr><th>Письмо</th><th>Вложения</th><th>Статус</th></tr>'+d.mail.map(x=>'<tr><td>'+esc(x.subject)+'</td><td>🪙 '+x.coins+' 💎 '+x.gems+' '+esc(x.weapon_id || '')+'</td><td>'+(x.claimed?'Получено':'Ожидает')+'</td></tr>').join('')+'</table></div>';\n    $('mb').innerHTML = h;\n    $('hf').addEventListener('change', historyFilter);\n    historyFilter();\n  }\n\n  async function historyFilter() {\n    try {\n      const id = $('mt').textContent.replace('Игрок ','').trim();\n      const d = await api('/admin/api/player/'+encodeURIComponent(id)+'/history?category='+encodeURIComponent($('hf')?.value || ''));\n      $('hist').innerHTML = '<table><tr><th>Время</th><th>Категория</th><th>Действие</th><th>Детали</th></tr>'+d.map(x=>'<tr><td>'+new Date(x.created_at*1000).toLocaleString()+'</td><td>'+esc(x.category)+'</td><td>'+esc(x.action)+'</td><td>'+esc(x.details)+'</td></tr>').join('')+'</table>';\n    } catch(e) { errorBox('hist', e); }\n  }\n  window.historyFilter = historyFilter;\n\n  async function adjust(action) {\n    const amount = prompt(action === 'level' ? 'Новый уровень' : 'Изменение количества','0');\n    if (amount === null) return;\n    const reason = prompt('Причина (обязательно)','Коррекция администратора');\n    if (!reason) return;\n    const id = $('mt').textContent.replace('Игрок ','').trim();\n    await api('/admin/api/adjust',{method:'POST',body:JSON.stringify({id,action,amount,reason})});\n    await openPlayer(id);\n  }\n\n  async function giftPlayer() {\n    const id = $('mt').textContent.replace('Игрок ','').trim();\n    const coins = prompt('Монеты','0'); if (coins === null) return;\n    const gems = prompt('Кристаллы','0'); if (gems === null) return;\n    const weapon_id = prompt('ID оружия (необязательно)','') || '';\n    const reason = prompt('Причина','Подарок от администрации'); if (!reason) return;\n    await api('/admin/api/gift',{method:'POST',body:JSON.stringify({id,coins,gems,weapon_id,reason,subject:'Подарок от администрации',body:reason})});\n    alert('Письмо отправлено'); openPlayer(id);\n  }\n\n  async function toggleBan(b) {\n    const id = $('mt').textContent.replace('Игрок ','').trim();\n    const reason = prompt('Причина',b?'Нарушение правил':'Снятие блокировки'); if (!reason) return;\n    await api('/admin/api/ban',{method:'POST',body:JSON.stringify({id,banned:b,reason})});\n    openPlayer(id); loadPlayers();\n  }\n\n  function closeModal() { $('modal').classList.remove('show'); }\n  window.closeModal = closeModal;\n\n  function loadBroadcast() {\n    const a = $('bcAudience');\n    if (a) $('bcLevelBox').style.display = a.value === 'level' ? 'block' : 'none';\n    loadBroadcastHistory();\n  }\n\n  async function sendBroadcast() {\n    try {\n      const audience=$('bcAudience').value, minLevel=Math.max(1,Number($('bcMinLevel').value||1));\n      const coins=Math.max(0,Number($('bcCoins').value||0)), gems=Math.max(0,Number($('bcGems').value||0));\n      const subject=$('bcSubject').value.trim(), body=$('bcBody').value.trim(), reason=$('bcReason').value.trim(), weapon_id=$('bcWeapon').value.trim();\n      if(!subject||!body||!reason){alert('Тема, текст и причина обязательны');return;}\n      const preview=await api('/admin/api/broadcast/preview?audience='+encodeURIComponent(audience)+'&min_level='+minLevel);\n      const total=preview.total||0;\n      if(!confirm('Получателей: '+total+'\\n\\nНаграда каждому: '+coins+' монет + '+gems+' кристаллов'+(weapon_id?' + '+weapon_id:'')+'\\n\\nОтправить сейчас?'))return;\n      const d=await api('/admin/api/broadcast',{method:'POST',body:JSON.stringify({audience,min_level:minLevel,coins,gems,weapon_id,subject,body,reason})});\n      $('bcResult').textContent='Готово: отправлено '+d.sent+' игрокам. ID рассылки: '+d.broadcast_id;\n      loadBroadcastHistory();\n    } catch(e) { alert(e.message); }\n  }\n\n  async function loadBroadcastHistory() {\n    try {\n      const d=await api('/admin/api/broadcasts');\n      $('bchistory').innerHTML='<div class=\"card\"><h3>История массовых рассылок</h3><table><tr><th>Дата</th><th>Название</th><th>Получателей</th><th>Награда</th><th>Причина</th></tr>'+d.map(x=>'<tr><td>'+new Date(x.created_at*1000).toLocaleString()+'</td><td>'+esc(x.subject)+'</td><td>'+x.recipient_count+'</td><td>🪙 '+x.coins+' 💎 '+x.gems+(x.weapon_id?' 🎁 '+esc(x.weapon_id):'')+'</td><td>'+esc(x.reason)+'</td></tr>').join('')+'</table></div>';\n    } catch(e) { errorBox('bchistory', e); }\n  }\n\n  async function loadFinance() {\n    try {\n      const d=await api('/admin/api/finance');\n      $('fb').innerHTML='<div class=\"grid\"><div class=\"card\">Доход за 24ч: <b>'+d.dailyIncome+'</b></div><div class=\"card\">Подтверждённые платежи: <b>'+d.paymentCount+'</b></div></div><div class=\"card\"><h3>Топ донатеров</h3><table><tr><th>ID</th><th>Сумма</th><th>Платежей</th></tr>'+d.topDonors.map(x=>'<tr><td>'+esc(x.id)+'</td><td>'+x.total+'</td><td>'+x.payments+'</td></tr>').join('')+'</table></div>';\n    } catch(e) { errorBox('fb', e); }\n  }\n\n  async function loadPrices() {\n    try {\n      const d=await api('/admin/api/prices');\n      $('prb').innerHTML='<div class=\"card\"><table><tr><th>Оружие</th><th>Цена</th><th>Урон</th><th></th></tr>'+d.map(x=>'<tr><td>'+esc(x.icon)+' '+esc(x.name)+'</td><td><input id=\"p_'+esc(x.item_id)+'\" value=\"'+x.price+'\"></td><td>'+x.damage+'</td><td><button type=\"button\" data-action=\"price\" data-item-id=\"'+esc(x.item_id)+'\">Сохранить</button></td></tr>').join('')+'</table></div>';\n    } catch(e) { errorBox('prb', e); }\n  }\n\n  async function price(id) {\n    const reason=prompt('Причина изменения цены','Коррекция магазина'); if(!reason)return;\n    await api('/admin/api/price',{method:'POST',body:JSON.stringify({item_id:id,price:$('p_'+id).value,reason})});\n    loadPrices();\n  }\n\n  async function loadAnti() {\n    try {\n      const d=await api('/admin/api/anticheat');\n      $('ab').innerHTML='<div class=\"card\"><table><tr><th>ID</th><th>Игрок</th><th>Нарушения</th><th>Последнее</th><th>Статус</th></tr>'+d.map(x=>'<tr><td>'+esc(x.id)+'</td><td>'+esc(x.first_name||x.username||'')+'</td><td>'+x.strikes+'</td><td>'+x.last_action_ms+'</td><td>'+(x.banned?'BAN':'OK')+'</td></tr>').join('')+'</table></div>';\n    } catch(e) { errorBox('ab', e); }\n  }\n\n  async function loadLogs() {\n    try {\n      const d=await api('/admin/api/logs');\n      $('lb').innerHTML='<div class=\"card\"><table><tr><th>Время</th><th>Игрок</th><th>Действие</th><th>Причина</th></tr>'+d.map(x=>'<tr><td>'+new Date(x.created_at*1000).toLocaleString()+'</td><td>'+esc(x.telegram_id)+'</td><td>'+esc(x.action)+'</td><td>'+esc(x.reason)+'</td></tr>').join('')+'</table></div>';\n    } catch(e) { errorBox('lb', e); }\n  }\n\n  function bindEvents() {\n    document.querySelectorAll('#login form').forEach(form => {\n      form.addEventListener('submit', e => { e.preventDefault(); const role=form.querySelector('input[name=\"role\"]')?.value || 'owner'; adminLogin(role,e); });\n    });\n    document.querySelectorAll('[data-perm]').forEach(btn => btn.addEventListener('click', () => tab(btn.dataset.tab || btn.dataset.perm)));\n    $('q')?.addEventListener('keydown', e => { if(e.key === 'Enter') loadPlayers(); });\n    $('bcAudience')?.addEventListener('change', () => { $('bcLevelBox').style.display=$('bcAudience').value==='level'?'block':'none'; });\n    $('modal')?.addEventListener('click', e => { if(e.target === $('modal')) closeModal(); });\n    $('app')?.addEventListener('click', async e => {\n      const btn=e.target.closest('[data-action]');\n      if(!btn) return;\n      const action=btn.dataset.action;\n      try {\n        if(action==='search-players') return loadPlayers();\n        if(action==='open-by-id') return openById();\n        if(action==='open-player') return openPlayer(btn.dataset.playerId);\n        if(action==='players-page') return loadPlayers(Number(btn.dataset.offset||0));\n        if(action==='adjust') return adjust(btn.dataset.kind);\n        if(action==='gift') return giftPlayer();\n        if(action==='ban') return toggleBan(Number(btn.dataset.banned));\n        if(action==='price') return price(btn.dataset.itemId);\n        if(action==='close-modal') return closeModal();\n        if(action==='broadcast') return sendBroadcast();\n        if(action==='save-arena-bots') return saveArenaBots();\n      } catch(err) { alert(err.message || String(err)); }\n    });\n    $('pb')?.addEventListener('click', e => {\n      if(e.target.closest('[data-action]')) return;\n      const row=e.target.closest('[data-player-id]');\n      if(row) openPlayer(row.dataset.playerId);\n    });\n  }\n\n  function boot() {\n    document.documentElement.dataset.territoryAdminJs='G124';\n    bindEvents();\n    const app=$('app');\n    if(app && app.style.display !== 'none') loadPlayers();\n  }\n\n  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, {once:true}); else boot();\n})();\n";
+\n\n  function openById() { const id = $('q')?.value.trim(); if (id) openPlayer(id); }\n  window.openById = openById;\n\n  async function loadPlayers(offset = 0) {\n    try {\n      const q = $('q')?.value.replace(/^@/, '') || '';\n      const d = await api('/admin/api/players?q='+encodeURIComponent(q)+'&offset='+offset);\n      let h = '<div class=\"card\"><span class=\"muted\">Найдено: '+d.total+'</span></div><div class=\"card\"><table><tr><th>Telegram ID</th><th>Игрок</th><th>Ур.</th><th>Монеты</th><th>Кристаллы</th><th>Статус</th><th></th></tr>';\n      for (const p of d.rows) {\n        h += '<tr class=\"click\" data-player-id=\"'+esc(p.id)+'\"><td>'+esc(p.id)+'</td><td>'+esc(p.first_name || p.username || '')+'<br><span class=\"muted\">@'+esc(p.username || '')+'</span></td><td>'+p.level+'</td><td>'+p.coins+'</td><td>'+p.gems+'</td><td>'+(p.banned?'<span class=\"pill dangerText\">BAN</span>':'<span class=\"pill\">OK</span>')+'</td><td><button type=\"button\" data-action=\"open-player\" data-player-id=\"'+esc(p.id)+'\">Открыть</button></td></tr>';\n      }\n      h += '</table></div><div class=\"row\">';\n      if (d.offset > 0) h += '<button type=\"button\" data-action=\"players-page\" data-offset=\"'+Math.max(0,d.offset-d.limit)+'\">← Назад</button>';\n      if (d.offset + d.limit < d.total) h += '<button type=\"button\" data-action=\"players-page\" data-offset=\"'+(d.offset+d.limit)+'\">Далее →</button>';\n      h += '</div>';\n      $('pb').innerHTML = h;\n    } catch (e) { errorBox('pb', e); }\n  }\n  window.loadPlayers = loadPlayers;\n\n  async function openPlayer(id) {\n    try {\n      const d = await api('/admin/api/player/'+encodeURIComponent(id));\n      if (!d) { alert('Игрок не найден'); return; }\n      $('mt').textContent = 'Игрок ' + id;\n      renderPlayer(d);\n      $('modal').classList.add('show');\n    } catch (e) { alert(e.message); }\n  }\n  window.openPlayer = openPlayer;\n\n  function renderPlayer(d) {\n    const p = d.player;\n    let h = '<div class=\"grid\"><div class=\"card\"><h3>Профиль</h3><div class=\"kv\"><div>ID<br><b>'+esc(p.telegram_id)+'</b></div><div>Имя<br><b>'+esc(p.first_name)+' '+esc(p.last_name)+'</b></div><div>Username<br><b>@'+esc(p.username)+'</b></div><div>Уровень<br><b>'+p.level+'</b></div><div>XP<br><b>'+p.exp+'</b></div><div>Статус<br><b>'+(p.banned?'BAN':'Активен')+'</b></div><div>Монеты<br><b>'+p.coins+'</b></div><div>Кристаллы<br><b>'+p.gems+'</b></div></div></div>';\n    h += '<div class=\"card\"><h3>Управление</h3><div class=\"actions\"><button type=\"button\" data-action=\"adjust\" data-kind=\"coins\">Монеты ±</button><button type=\"button\" data-action=\"adjust\" data-kind=\"gems\">Кристаллы ±</button><button type=\"button\" data-action=\"adjust\" data-kind=\"exp\">XP ±</button><button type=\"button\" data-action=\"adjust\" data-kind=\"level\">Уровень</button><button type=\"button\" data-action=\"adjust\" data-kind=\"hp\">HP ±</button><button type=\"button\" data-action=\"gift\">Подарок в почту</button><button type=\"button\" class=\"'+(p.banned?'good':'danger')+'\" data-action=\"ban\" data-banned=\"'+(p.banned?0:1)+'\">'+(p.banned?'Разбан':'Бан')+'</button></div></div></div>';\n    h += '<div class=\"card\"><h3>Инвентарь</h3><table><tr><th>Предмет</th><th>Количество</th></tr>'+(d.inventory.length?d.inventory.map(x=>'<tr><td>'+esc(x.icon)+' '+esc(x.name)+'</td><td>'+x.quantity+'</td></tr>').join(''):'<tr><td colspan=\"2\" class=\"muted\">Пусто</td></tr>')+'</table></div>';\n    h += '<div class=\"card\"><h3>История действий</h3><div class=\"row\"><select id=\"hf\"><option value=\"\">Все</option><option>Admin</option><option>Shop</option><option>Mail</option><option>Arena</option><option>Anti-cheat</option><option>Auth</option><option>Tournament</option></select></div><div id=\"hist\" class=\"history\"></div></div>';\n    h += '<div class=\"card\"><h3>Экономика</h3><table><tr><th>Валюта</th><th>Изменение</th><th>До</th><th>После</th><th>Причина</th></tr>'+d.ledger.map(x=>'<tr><td>'+esc(x.currency)+'</td><td>'+x.amount+'</td><td>'+x.balance_before+'</td><td>'+x.balance_after+'</td><td>'+esc(x.reason)+'</td></tr>').join('')+'</table></div>';\n    h += '<div class=\"card\"><h3>Почта</h3><table><tr><th>Письмо</th><th>Вложения</th><th>Статус</th></tr>'+d.mail.map(x=>'<tr><td>'+esc(x.subject)+'</td><td>🪙 '+x.coins+' 💎 '+x.gems+' '+esc(x.weapon_id || '')+'</td><td>'+(x.claimed?'Получено':'Ожидает')+'</td></tr>').join('')+'</table></div>';\n    $('mb').innerHTML = h;\n    $('hf').addEventListener('change', historyFilter);\n    historyFilter();\n  }\n\n  async function historyFilter() {\n    try {\n      const id = $('mt').textContent.replace('Игрок ','').trim();\n      const d = await api('/admin/api/player/'+encodeURIComponent(id)+'/history?category='+encodeURIComponent($('hf')?.value || ''));\n      $('hist').innerHTML = '<table><tr><th>Время</th><th>Категория</th><th>Действие</th><th>Детали</th></tr>'+d.map(x=>'<tr><td>'+new Date(x.created_at*1000).toLocaleString()+'</td><td>'+esc(x.category)+'</td><td>'+esc(x.action)+'</td><td>'+esc(x.details)+'</td></tr>').join('')+'</table>';\n    } catch(e) { errorBox('hist', e); }\n  }\n  window.historyFilter = historyFilter;\n\n  async function adjust(action) {\n    const amount = prompt(action === 'level' ? 'Новый уровень' : 'Изменение количества','0');\n    if (amount === null) return;\n    const reason = prompt('Причина (обязательно)','Коррекция администратора');\n    if (!reason) return;\n    const id = $('mt').textContent.replace('Игрок ','').trim();\n    await api('/admin/api/adjust',{method:'POST',body:JSON.stringify({id,action,amount,reason})});\n    await openPlayer(id);\n  }\n\n  async function giftPlayer() {\n    const id = $('mt').textContent.replace('Игрок ','').trim();\n    const coins = prompt('Монеты','0'); if (coins === null) return;\n    const gems = prompt('Кристаллы','0'); if (gems === null) return;\n    const weapon_id = prompt('ID оружия (необязательно)','') || '';\n    const reason = prompt('Причина','Подарок от администрации'); if (!reason) return;\n    await api('/admin/api/gift',{method:'POST',body:JSON.stringify({id,coins,gems,weapon_id,reason,subject:'Подарок от администрации',body:reason})});\n    alert('Письмо отправлено'); openPlayer(id);\n  }\n\n  async function toggleBan(b) {\n    const id = $('mt').textContent.replace('Игрок ','').trim();\n    const reason = prompt('Причина',b?'Нарушение правил':'Снятие блокировки'); if (!reason) return;\n    await api('/admin/api/ban',{method:'POST',body:JSON.stringify({id,banned:b,reason})});\n    openPlayer(id); loadPlayers();\n  }\n\n  function closeModal() { $('modal').classList.remove('show'); }\n  window.closeModal = closeModal;\n\n  function loadBroadcast() {\n    const a = $('bcAudience');\n    if (a) $('bcLevelBox').style.display = a.value === 'level' ? 'block' : 'none';\n    loadBroadcastHistory();\n  }\n\n  async function sendBroadcast() {\n    try {\n      const audience=$('bcAudience').value, minLevel=Math.max(1,Number($('bcMinLevel').value||1));\n      const coins=Math.max(0,Number($('bcCoins').value||0)), gems=Math.max(0,Number($('bcGems').value||0));\n      const subject=$('bcSubject').value.trim(), body=$('bcBody').value.trim(), reason=$('bcReason').value.trim(), weapon_id=$('bcWeapon').value.trim();\n      if(!subject||!body||!reason){alert('Тема, текст и причина обязательны');return;}\n      const preview=await api('/admin/api/broadcast/preview?audience='+encodeURIComponent(audience)+'&min_level='+minLevel);\n      const total=preview.total||0;\n      if(!confirm('Получателей: '+total+'\\n\\nНаграда каждому: '+coins+' монет + '+gems+' кристаллов'+(weapon_id?' + '+weapon_id:'')+'\\n\\nОтправить сейчас?'))return;\n      const d=await api('/admin/api/broadcast',{method:'POST',body:JSON.stringify({audience,min_level:minLevel,coins,gems,weapon_id,subject,body,reason})});\n      $('bcResult').textContent='Готово: отправлено '+d.sent+' игрокам. ID рассылки: '+d.broadcast_id;\n      loadBroadcastHistory();\n    } catch(e) { alert(e.message); }\n  }\n\n  async function loadBroadcastHistory() {\n    try {\n      const d=await api('/admin/api/broadcasts');\n      $('bchistory').innerHTML='<div class=\"card\"><h3>История массовых рассылок</h3><table><tr><th>Дата</th><th>Название</th><th>Получателей</th><th>Награда</th><th>Причина</th></tr>'+d.map(x=>'<tr><td>'+new Date(x.created_at*1000).toLocaleString()+'</td><td>'+esc(x.subject)+'</td><td>'+x.recipient_count+'</td><td>🪙 '+x.coins+' 💎 '+x.gems+(x.weapon_id?' 🎁 '+esc(x.weapon_id):'')+'</td><td>'+esc(x.reason)+'</td></tr>').join('')+'</table></div>';\n    } catch(e) { errorBox('bchistory', e); }\n  }\n\n  async function loadFinance() {\n    try {\n      const d=await api('/admin/api/finance');\n      $('fb').innerHTML='<div class=\"grid\"><div class=\"card\">Доход за 24ч: <b>'+d.dailyIncome+'</b></div><div class=\"card\">Подтверждённые платежи: <b>'+d.paymentCount+'</b></div></div><div class=\"card\"><h3>Топ донатеров</h3><table><tr><th>ID</th><th>Сумма</th><th>Платежей</th></tr>'+d.topDonors.map(x=>'<tr><td>'+esc(x.id)+'</td><td>'+x.total+'</td><td>'+x.payments+'</td></tr>').join('')+'</table></div>';\n    } catch(e) { errorBox('fb', e); }\n  }\n\n  async function loadPrices() {\n    try {\n      const d=await api('/admin/api/prices');\n      $('prb').innerHTML='<div class=\"card\"><table><tr><th>Оружие</th><th>Цена</th><th>Урон</th><th></th></tr>'+d.map(x=>'<tr><td>'+esc(x.icon)+' '+esc(x.name)+'</td><td><input id=\"p_'+esc(x.item_id)+'\" value=\"'+x.price+'\"></td><td>'+x.damage+'</td><td><button type=\"button\" data-action=\"price\" data-item-id=\"'+esc(x.item_id)+'\">Сохранить</button></td></tr>').join('')+'</table></div>';\n    } catch(e) { errorBox('prb', e); }\n  }\n\n  async function price(id) {\n    const reason=prompt('Причина изменения цены','Коррекция магазина'); if(!reason)return;\n    await api('/admin/api/price',{method:'POST',body:JSON.stringify({item_id:id,price:$('p_'+id).value,reason})});\n    loadPrices();\n  }\n\n  async function loadAnti() {\n    try {\n      const d=await api('/admin/api/anticheat');\n      $('ab').innerHTML='<div class=\"card\"><table><tr><th>ID</th><th>Игрок</th><th>Нарушения</th><th>Последнее</th><th>Статус</th></tr>'+d.map(x=>'<tr><td>'+esc(x.id)+'</td><td>'+esc(x.first_name||x.username||'')+'</td><td>'+x.strikes+'</td><td>'+x.last_action_ms+'</td><td>'+(x.banned?'BAN':'OK')+'</td></tr>').join('')+'</table></div>';\n    } catch(e) { errorBox('ab', e); }\n  }\n\n  async function loadLogs() {\n    try {\n      const d=await api('/admin/api/logs');\n      $('lb').innerHTML='<div class=\"card\"><table><tr><th>Время</th><th>Игрок</th><th>Действие</th><th>Причина</th></tr>'+d.map(x=>'<tr><td>'+new Date(x.created_at*1000).toLocaleString()+'</td><td>'+esc(x.telegram_id)+'</td><td>'+esc(x.action)+'</td><td>'+esc(x.reason)+'</td></tr>').join('')+'</table></div>';\n    } catch(e) { errorBox('lb', e); }\n  }\n\n  function bindEvents() {\n    document.querySelectorAll('#login form').forEach(form => {\n      form.addEventListener('submit', e => { e.preventDefault(); const role=form.querySelector('input[name=\"role\"]')?.value || 'owner'; adminLogin(role,e); });\n    });\n    document.querySelectorAll('[data-perm]').forEach(btn => btn.addEventListener('click', () => tab(btn.dataset.tab || btn.dataset.perm)));\n    $('q')?.addEventListener('keydown', e => { if(e.key === 'Enter') loadPlayers(); });\n    $('bcAudience')?.addEventListener('change', () => { $('bcLevelBox').style.display=$('bcAudience').value==='level'?'block':'none'; });\n    $('modal')?.addEventListener('click', e => { if(e.target === $('modal')) closeModal(); });\n    $('app')?.addEventListener('click', async e => {\n      const btn=e.target.closest('[data-action]');\n      if(!btn) return;\n      const action=btn.dataset.action;\n      try {\n        if(action==='search-players') return loadPlayers();\n        if(action==='open-by-id') return openById();\n        if(action==='open-player') return openPlayer(btn.dataset.playerId);\n        if(action==='players-page') return loadPlayers(Number(btn.dataset.offset||0));\n        if(action==='adjust') return adjust(btn.dataset.kind);\n        if(action==='gift') return giftPlayer();\n        if(action==='ban') return toggleBan(Number(btn.dataset.banned));\n        if(action==='price') return price(btn.dataset.itemId);\n        if(action==='close-modal') return closeModal();\n        if(action==='broadcast') return sendBroadcast();\n        if(action==='save-arena-bots') return saveArenaBots();\n      } catch(err) { alert(err.message || String(err)); }\n    });\n    $('pb')?.addEventListener('click', e => {\n      if(e.target.closest('[data-action]')) return;\n      const row=e.target.closest('[data-player-id]');\n      if(row) openPlayer(row.dataset.playerId);\n    });\n  }\n\n  function boot() {\n    document.documentElement.dataset.territoryAdminJs='G120';\n    bindEvents();\n    const app=$('app');\n    if(app && app.style.display !== 'none') loadPlayers();\n  }\n\n  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, {once:true}); else boot();\n})();\n";
 
 function cookies(request) {
   const out = {};
@@ -247,27 +250,27 @@ async function playerFromTelegram(request, env, stub) {
   }
 
   if (!initData) throw new Response(JSON.stringify({error:"Authentication required"}),{
-    status:401,headers:{"content-type":"application/json"}
+    status:401,headers:{"content-type":"application/json",...corsHeaders()}
   });
 
   let auth;
   try { auth = await telegramAuth(initData, env.BOT_TOKEN); }
   catch (e) {
     throw new Response(JSON.stringify({error:e.message}),{
-      status:401,headers:{"content-type":"application/json"}
+      status:401,headers:{"content-type":"application/json",...corsHeaders()}
     });
   }
 
   const p = await dbJSON(stub,"/db/upsert","POST",{user:auth.user});
   if (p.banned) throw new Response(JSON.stringify({error:"Account banned"}),{
-    status:403,headers:{"content-type":"application/json"}
+    status:403,headers:{"content-type":"application/json",...corsHeaders()}
   });
   return p;
 }
 
 function adminHTML(auth=null) {
 const authed = !!auth;
-return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Territory Admin G124</title>
+return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Territory Admin G112</title>
 <style>body{margin:0;background:#0a1016;color:#edf4f7;font-family:system-ui,-apple-system,sans-serif}header{padding:15px;background:#111b24;position:sticky;top:0;z-index:3;border-bottom:1px solid #263642}main{max-width:1180px;margin:auto;padding:14px}.tabs{display:flex;gap:7px;overflow:auto;margin-bottom:12px}button,input,select,textarea{font:inherit}button{padding:9px 12px;border:1px solid #3b4d59;border-radius:9px;background:#182630;color:#fff;cursor:pointer}button:hover{background:#243640}.danger{background:#632522}.good{background:#24502e}.muted{color:#91a2ab;font-size:12px}.panel{display:none}.panel.active{display:block}.card{background:#111b23;border:1px solid #273742;border-radius:12px;padding:13px;margin:9px 0}.row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:9px}input,select,textarea{box-sizing:border-box;width:100%;padding:9px;background:#0d151c;border:1px solid #394b56;border-radius:8px;color:#fff}table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid #26343d;text-align:left;font-size:13px;vertical-align:top}.click{cursor:pointer}.click:hover{background:#17242c}.pill{display:inline-block;padding:3px 7px;border-radius:999px;background:#24343e;font-size:11px}.modal{position:fixed;inset:0;background:#000b;display:none;align-items:flex-start;justify-content:center;padding:20px;overflow:auto;z-index:10}.modal.show{display:flex}.modalbox{width:min(1050px,100%);background:#101a22;border:1px solid #334752;border-radius:14px;padding:14px}.actions button{margin:3px}.history{max-height:380px;overflow:auto}.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px}.kv div{background:#0c141a;padding:8px;border-radius:8px}.small{font-size:12px}.dangerText{color:#ff8f86}</style></head><body>
 <header><b>⚔️ Territory · G112 Admin</b><span id="status" class="muted">${authed ? ` · ${auth.label}: ${auth.login}` : ""}</span></header><main>
 <div id="login" class="card" style="display:${authed ? "none" : "block"}"><h2>Вход в панель</h2><div class="grid">
@@ -311,11 +314,11 @@ return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="v
  * GameHub / PresenceHub / RoomHub namespaces and migration history.
  */
 export class GameHub extends DurableObject {
-  async fetch() { return new Response(JSON.stringify({ok:true,hub:"game",legacy:true}), {headers:{"content-type":"application/json"}}); }
+  async fetch() { return new Response(JSON.stringify({ok:true,hub:"game",legacy:true}), {headers:{"content-type":"application/json",...corsHeaders()}}); }
 }
 
 export class PresenceHub extends DurableObject {
-  async fetch() { return new Response(JSON.stringify({ok:true,hub:"presence",legacy:true}), {headers:{"content-type":"application/json"}}); }
+  async fetch() { return new Response(JSON.stringify({ok:true,hub:"presence",legacy:true}), {headers:{"content-type":"application/json",...corsHeaders()}}); }
 }
 
 
@@ -365,8 +368,8 @@ export class RoomHub extends DurableObject{
  broadcast(ids,data){ids.forEach(id=>this.send(id,data))}
  async fetch(req){
   const u=new URL(req.url);
-  if(u.pathname==="/admin/config"){const s=await this.state();if(req.method==="GET")return new Response(JSON.stringify({ok:true,config:s.config}),{headers:{"content-type":"application/json"}});
-   const b=await req.json().catch(()=>({}));s.config={...s.config,...b};await this.save(s);return new Response(JSON.stringify({ok:true,config:s.config}),{headers:{"content-type":"application/json"}});}
+  if(u.pathname==="/admin/config"){const s=await this.state();if(req.method==="GET")return new Response(JSON.stringify({ok:true,config:s.config}),{headers:{"content-type":"application/json",...corsHeaders()}});
+   const b=await req.json().catch(()=>({}));s.config={...s.config,...b};await this.save(s);return new Response(JSON.stringify({ok:true,config:s.config}),{headers:{"content-type":"application/json",...corsHeaders()}});}
   if(req.headers.get("Upgrade")?.toLowerCase()!=="websocket")return new Response("WebSocket required",{status:426});
   const id=u.searchParams.get("telegram_id");if(!id)return new Response("Unauthorized",{status:401});
   const pair=new WebSocketPair(),ws=pair[1];ws.accept();this.sockets.set(String(id),ws);
@@ -544,10 +547,12 @@ export class TerritoryDB extends DurableObject {
         xp INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY(room_id,telegram_id)
       );
-      CREATE TABLE IF NOT EXISTS xp_awards(
-        telegram_id TEXT NOT NULL, reference TEXT NOT NULL, source TEXT NOT NULL DEFAULT '',
-        amount INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY(telegram_id,reference)
+      CREATE TABLE IF NOT EXISTS pve_sessions(
+        session_id TEXT PRIMARY KEY, telegram_id TEXT NOT NULL, chapter INTEGER NOT NULL, stage INTEGER NOT NULL,
+        boss INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, nonce TEXT NOT NULL,
+        hero_hp INTEGER NOT NULL, max_hp INTEGER NOT NULL, enemy_hp INTEGER NOT NULL, enemy_max_hp INTEGER NOT NULL,
+        damage INTEGER NOT NULL, actions INTEGER NOT NULL DEFAULT 0, ended INTEGER NOT NULL DEFAULT 0, result TEXT DEFAULT '',
+        state_json TEXT NOT NULL DEFAULT '{}'
       );
     `);
 
@@ -560,6 +565,7 @@ export class TerritoryDB extends DurableObject {
 
     // Compatibility migration for databases created by older Territory builds.
     ensure('players', {
+      state_json:"TEXT NOT NULL DEFAULT '{}'",
       username:"TEXT DEFAULT ''", first_name:"TEXT DEFAULT ''", last_name:"TEXT DEFAULT ''", photo_url:"TEXT DEFAULT ''",
       level:"INTEGER NOT NULL DEFAULT 1", exp:"INTEGER NOT NULL DEFAULT 0", hp:"INTEGER NOT NULL DEFAULT 120",
       max_hp:"INTEGER NOT NULL DEFAULT 120", coins:"INTEGER NOT NULL DEFAULT 1000", gems:"INTEGER NOT NULL DEFAULT 25",
@@ -622,8 +628,6 @@ export class TerritoryDB extends DurableObject {
 
   progress(id,p){
     this.init();
-    // Legacy sync endpoint: economy AND progression (level/XP) are server-owned.
-    // Only non-progression compatibility fields are accepted here.
     const allowed=["hp","max_hp","strength","agility","defense","weapon"];
     const sets=[],args=[];
     for(const k of allowed) if(p[k]!==undefined){
@@ -636,23 +640,13 @@ export class TerritoryDB extends DurableObject {
     return this.player(id);
   }
 
-  awardXp(id,amount,source,reference){
-    this.init();
-    const player=this.sql.exec(`SELECT exp,level FROM players WHERE telegram_id=?`,id).toArray()[0];
-    if(!player) throw Error("Player not found");
-    const e=Math.max(0,Math.min(100000,n(amount)));
-    const src=s(source||"game").slice(0,40);
-    const ref=s(reference||"").slice(0,160);
-    if(!ref) throw Error("XP reference is required");
-    const claim=this.sql.exec(`INSERT OR IGNORE INTO xp_awards(telegram_id,reference,source,amount,created_at) VALUES(?,?,?,?,?)`,id,ref,src,e,now());
-    if(!claim.meta?.changes) return {player:this.player(id),awarded:0,duplicate:true,reference:ref};
-    let level=Math.max(1,n(player.level,1));
-    let exp=Math.max(0,n(player.exp))+e;
-    while(exp>=level*100){exp-=level*100;level++;}
-    this.sql.exec(`UPDATE players SET exp=?,level=?,updated_at=? WHERE telegram_id=?`,exp,level,now(),id);
-    this.event(id,"Progress","xp_award",JSON.stringify({source:src,reference:ref,amount:e,level,exp}));
-    return {player:this.player(id),awarded:e,duplicate:false,reference:ref};
-  }
+  gameState(id){this.init();const p=this.player(id);if(!p)return null;try{return p.state_json?JSON.parse(p.state_json):null}catch{return null;}}
+  saveGameState(id,raw){this.init();const p=this.player(id);if(!p)throw Error("Player not found");const x=(raw&&typeof raw==='object'&&!Array.isArray(raw))?{...raw}:{};delete x.coins;delete x.gems;delete x.redGems;delete x.red_gems;delete x.level;delete x.xp;delete x.xpNext;x.currentChapter=clamp(x.currentChapter,1,240,1);x.chapterStage=clamp(x.chapterStage,1,4,1);x.chapterProgress=clamp(x.chapterProgress,0,100,0);x.battleStones=clamp(x.battleStones,0,1000000,30);x.battleStonesBonus=clamp(x.battleStonesBonus,0,1000000,0);x.pve=(x.pve&&typeof x.pve==='object')?x.pve:{};x.inventoryItems=Array.isArray(x.inventoryItems)?x.inventoryItems.slice(0,100):[];x.forge=(x.forge&&typeof x.forge==='object')?x.forge:{};this.sql.exec(`UPDATE players SET state_json=?,updated_at=? WHERE telegram_id=?`,JSON.stringify(x).slice(0,500000),now(),id);return x;}
+  playerPayload(id){const p=this.player(id);if(!p)throw Error("Player not found");return {schema_version:1,telegram_id:p.telegram_id,username:p.username,first_name:p.first_name,last_name:p.last_name,photo_url:p.photo_url,level:p.level,xp:p.exp,xp_next:Math.max(100,100*p.level),hp:p.hp,max_hp:p.max_hp,coins:p.coins,gems:p.gems,red_gems:0,vip:0,has_server_progress:!!p.state_json&&p.state_json!=='{}',legacy_imported:false,banned:!!p.banned};}
+  economySnapshot(id){const p=this.player(id);if(!p)throw Error("Player not found");return {coins:p.coins,gems:p.gems,red_gems:0,vip:0};}
+  pveStart(id,chapter,stage,boss){this.init();const p=this.player(id);if(!p)throw Error("Player not found");const s=this.gameState(id)||{currentChapter:1,chapterStage:1,chapterProgress:0,battleStones:30,battleStonesBonus:0,pve:{chapter:1,stage:1,progress:0}};chapter=clamp(chapter,1,240,1);stage=clamp(stage,1,4,1);boss=!!boss;if(chapter!==clamp(s.currentChapter,1,240,1))throw Error("Chapter mismatch");if(!boss&&stage!==clamp(s.chapterStage,1,4,1))throw Error("Stage mismatch");if(boss&&!s.chapterBossUnlocked&&!(s.pve&&s.pve.bossPending))throw Error("Boss is not unlocked");const active=this.sql.exec(`SELECT session_id FROM pve_sessions WHERE telegram_id=? AND ended=0 AND created_at>? LIMIT 1`,id,Date.now()-1800000).toArray()[0];if(active)throw Error("A PvE battle is already active");let bonus=clamp(s.battleStonesBonus,0,1000000,0),stones=clamp(s.battleStones,0,1000000,30);if(bonus>0)s.battleStonesBonus=bonus-1;else{if(stones<=0)throw Error("No battle stones");s.battleStones=stones-1;}const sid=crypto.randomUUID(),nonce=crypto.randomUUID().replace(/-/g,''),created=Date.now(),maxHp=Math.max(100,Number(p.max_hp)||100),heroHp=Math.max(1,Number(p.hp)||maxHp),level=Math.max(1,Number(p.level)||1),enemyMax=boss?2600:Math.round([1100,1250,1400,1600][stage-1]*(1+(chapter-1)*0.055)),damage=Math.max(boss?24:20,Math.floor((125+level*2+Number(p.strength||0))/(boss?4:5))),c={heroHp,maxHp,enemyHp:enemyMax,enemyMaxHp:enemyMax,damage,turn:0,guard:0};this.sql.exec(`INSERT INTO pve_sessions(session_id,telegram_id,chapter,stage,boss,created_at,nonce,hero_hp,max_hp,enemy_hp,enemy_max_hp,damage,actions,ended,result,state_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,sid,id,chapter,stage,boss?1:0,created,nonce,heroHp,maxHp,enemyMax,enemyMax,damage,0,0,'',JSON.stringify(c));this.saveGameState(id,s);this.event(id,'PvE','start',JSON.stringify({session_id:sid,chapter,stage,boss}));return {session_id:sid,nonce,seed:crypto.randomUUID(),state:s,combat:c};}
+  pveAction(id,sid,nonce,action){this.init();const r=this.sql.exec(`SELECT * FROM pve_sessions WHERE session_id=? AND telegram_id=?`,sid,id).toArray()[0];if(!r||r.ended)throw Error("Invalid or completed battle session");if(String(nonce)!==String(r.nonce))throw Error("Invalid battle nonce");if(Date.now()-Number(r.created_at)>1800000)throw Error("Battle session expired");const a=String(action||'');if(!/^(attack|skill:(power|guard|fire|burst|crown)|elixir_(hp|energy|attack|guard))$/.test(a))throw Error("Invalid battle action");const c=JSON.parse(r.state_json||'{}');let dmg=0;if(a==='elixir_hp')c.heroHp=Math.min(c.maxHp,c.heroHp+30);else if(a==='elixir_attack')c.damage+=5;else if(a==='elixir_guard')c.guard=Math.min(.55,(c.guard||0)+.08);else if(a==='skill:guard')c.heroHp=Math.min(c.maxHp,c.heroHp+Math.floor(c.maxHp*.12));else if(a==='skill:crown')c.heroHp=Math.min(c.maxHp,c.heroHp+Math.floor(c.maxHp*.2));else{dmg=a==='skill:power'?Math.floor(c.damage*1.8):a==='skill:fire'?Math.floor(c.damage*1.45):a==='skill:burst'?0:c.damage;if(a==='skill:burst')c.damage+=4;c.enemyHp=Math.max(0,c.enemyHp-dmg);}c.turn=Number(c.turn||0)+1;if(c.enemyHp<=0){r.ended=1;r.result='win';}else{const incoming=Math.max(1,Math.round((r.boss?26:12)*(1-(c.guard||0))));c.heroHp=Math.max(0,c.heroHp-incoming);if(c.heroHp<=0){r.ended=1;r.result='lose';}}r.actions=Number(r.actions||0)+1;r.hero_hp=c.heroHp;r.enemy_hp=c.enemyHp;r.state_json=JSON.stringify(c);this.sql.exec(`UPDATE pve_sessions SET hero_hp=?,enemy_hp=?,actions=?,ended=?,result=?,state_json=? WHERE session_id=?`,c.heroHp,c.enemyHp,r.actions,r.ended,r.result,r.state_json,sid);return {accepted:true,index:r.actions,combat:{heroHp:c.heroHp,maxHp:c.maxHp,enemyHp:c.enemyHp,enemyMaxHp:c.enemyMaxHp,turn:c.turn,ended:!!r.ended,result:r.result||null,bossTime:r.boss?Math.max(0,20-Math.floor((Date.now()-r.created_at)/1000)):null}};}
+  pveComplete(id,sid){this.init();const r=this.sql.exec(`SELECT * FROM pve_sessions WHERE session_id=? AND telegram_id=?`,sid,id).toArray()[0];if(!r||r.ended===2)throw Error("Invalid or already completed battle session");const age=Date.now()-Number(r.created_at);if(age>1800000)throw Error("Battle session expired");if(r.result!=='win')throw Error("Server has not confirmed the battle victory");if(Number(r.actions)<(r.boss?3:2))throw Error("Battle transcript is incomplete");if(age<(r.boss?5000:1500))throw Error("Battle completed too quickly");const s=this.gameState(id)||{};const chapter=Number(r.chapter),stage=Number(r.stage),boss=!!r.boss,reward=boss?{coins:chapter%10===0?1250:500,gems:chapter%10===0?25:5}:{coins:25,gems:0},p=this.player(id),beforeCoins=p.coins,beforeGems=p.gems;let xp=Number(p.exp)||0,lv=Math.max(1,Number(p.level)||1),add=boss?60:20;while(lv<240&&xp+add>=lv*100){add-=lv*100-xp;lv++;xp=0;}xp+=add;this.sql.exec(`UPDATE players SET coins=coins+?,gems=gems+?,exp=?,level=?,updated_at=? WHERE telegram_id=?`,reward.coins,reward.gems,xp,lv,now(),id);this.sql.exec(`INSERT INTO economy_ledger(telegram_id,currency,amount,balance_before,balance_after,kind,reference,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,id,'coins',reward.coins,beforeCoins,beforeCoins+reward.coins,'pve_reward',sid,boss?'PvE boss reward':'PvE stage reward',now());if(reward.gems)this.sql.exec(`INSERT INTO economy_ledger(telegram_id,currency,amount,balance_before,balance_after,kind,reference,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,id,'gems',reward.gems,beforeGems,beforeGems+reward.gems,'pve_reward',sid,'PvE boss gems',now());const loot={id:`loot_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,name:(boss?'Героический ':'Воинский ')+['Оружие','Шлем','Доспех','Пояс'][Math.max(0,stage-1)],title:'PvE loot',slot:['weapon','helmet','armor','belt'][Math.max(0,stage-1)],type:'equipment',rarity:boss?'epic':'rare',level:lv,enhance:0,attack:stage*4+(boss?18:0),defense:stage*3,setId:boss?'warchief':'tide',source:'pve'};s.inventoryItems=Array.isArray(s.inventoryItems)?s.inventoryItems:[];s.inventoryItems.unshift(loot);s.inventoryItems=s.inventoryItems.slice(0,100);s.lootFound=(Number(s.lootFound)||0)+1;if(boss){s.chapterBossUnlocked=false;s.chapterBossDefeated=true;s.chapterCompleted=true;s.totalChaptersCompleted=(Number(s.totalChaptersCompleted)||0)+1;s.forge=s.forge||{};s.forge.materials=(Number(s.forge.materials)||0)+(10+chapter);if(chapter<240){s.currentChapter=chapter+1;s.chapterStage=1;s.chapterProgress=0;s.chapterBossUnlocked=false;s.chapterBossDefeated=false;s.chapterCompleted=false;s.pve={chapter:chapter+1,stage:1,progress:0,bossPending:false,bossActive:false};}}else{s.chapterProgress=Math.min(100,(Number(s.chapterProgress)||0)+25);s.chapterStage=Math.min(4,stage+1);s.pve={...(s.pve||{}),chapter,stage:s.chapterStage,progress:s.chapterProgress,wins:(Number(s.pve?.wins)||0)+1};if(s.chapterProgress>=100){s.chapterBossUnlocked=true;s.pve.bossPending=true;}}this.saveGameState(id,s);this.sql.exec(`UPDATE pve_sessions SET ended=2 WHERE session_id=?`,sid);this.event(id,'PvE','complete',JSON.stringify({session_id:sid,chapter,stage,boss,reward}));const np=this.player(id);return {reward,economy:{coins:np.coins,gems:np.gems,red_gems:0,vip:0},player:this.playerPayload(id),state:s,loot,xp:{level:np.level,xp:np.exp,xpNext:np.level*100}};}
 
   catalog(){this.init();return this.sql.exec(
     `SELECT item_id,name,icon,price_coins AS price,damage FROM shop_catalog
@@ -919,7 +913,6 @@ export class TerritoryDB extends DurableObject {
     let level=Math.max(1,n(p.level,1)), exp=Math.max(0,n(p.exp))+e;
     while(exp>=level*100){exp-=level*100;level++;}
     this.sql.exec(`UPDATE players SET coins=coins+?,exp=?,level=?,updated_at=? WHERE telegram_id=?`,c,exp,level,now(),id);
-    this.sql.exec(`INSERT OR IGNORE INTO xp_awards(telegram_id,reference,source,amount,created_at) VALUES(?,?,?,?,?)`,id,`arena:${room}`,"arena",e,now());
     this.recordFinance(id,"arena_reward",c);
     return this.player(id);
   }
@@ -975,7 +968,13 @@ export class TerritoryDB extends DurableObject {
       if(u.pathname==="/db/upsert"){const x=await b();return json(this.upsert(x.user));}
       if(u.pathname==="/db/player"){return json(this.player(u.searchParams.get("id")||""));}
       if(u.pathname==="/db/progress"){const x=await b();return json(this.progress(x.id,x.patch||{}));}
-      if(u.pathname==="/db/xp-award"){const x=await b();return json(this.awardXp(x.id,x.amount,x.source,x.reference));}
+      if(u.pathname==="/db/player"){return json(this.playerPayload(u.searchParams.get("id")||""));}
+      if(u.pathname==="/db/state" && request.method==="GET"){return json(this.gameState(u.searchParams.get("id")||""));}
+      if(u.pathname==="/db/state" && request.method==="POST"){const x=await b();return json(this.saveGameState(x.id,x.state||{}));}
+      if(u.pathname==="/db/economy"){return json(this.economySnapshot(u.searchParams.get("id")||""));}
+      if(u.pathname==="/db/pve/start" && request.method==="POST"){const x=await b();return json(this.pveStart(x.id,x.chapter,x.stage,!!x.boss));}
+      if(u.pathname==="/db/pve/action" && request.method==="POST"){const x=await b();return json(this.pveAction(x.id,x.session_id,x.nonce,x.action));}
+      if(u.pathname==="/db/pve/complete" && request.method==="POST"){const x=await b();return json(this.pveComplete(x.id,x.session_id));}
       if(u.pathname==="/db/shop"){return json(this.catalog());}
       if(u.pathname==="/db/buy"){const x=await b();return json(this.buy(x.id,x.item_id));}
       if(u.pathname==="/db/mail"){return json(this.mail(u.searchParams.get("id")||""));}
@@ -1006,7 +1005,7 @@ export class TerritoryDB extends DurableObject {
   }
 }
 
-const TELEGRAM_GAME_LINK = "https://t.me/TeritoryGameBot?startapp";
+const TELEGRAM_GAME_LINK = "https://t.me/TerritoryGameBot?startapp";
 
 async function telegramBotApi(env, method, payload={}) {
   const token = s(env.BOT_TOKEN || env.TELEGRAM_BOT_TOKEN);
@@ -1048,6 +1047,8 @@ export default {
     const u=new URL(request.url);
 
     try{
+      if(request.method==="OPTIONS") return new Response(null,{status:204,headers:corsHeaders()});
+      if(u.pathname==="/api/health" && request.method==="GET") return json({ok:true,service:"territory-sdolars-server",build:"FIRST-TEST-01"});
       if(u.pathname==="/api/setup-telegram-webhook" && request.method==="GET"){
         const webhook = `${u.origin}/telegram/webhook`;
         const result = await telegramBotApi(env,"setWebhook",{url:webhook,allowed_updates:["message"],drop_pending_updates:false});
@@ -1083,18 +1084,18 @@ export default {
       }
 
       if(u.pathname==="/admin/health" && request.method==="GET"){
-        return json({ok:true,service:"admin",version:"G124"},200,{"cache-control":"no-store","x-territory-build":"G124"});
+        return json({ok:true,service:"admin",version:"G112"},200,{"cache-control":"no-store","x-territory-build":"G112"});
       }
       // Admin login is deliberately handled before the Durable Object lookup.
       // This keeps the login page independent from the game database and makes
       // the native HTML form work even when browser JavaScript is unavailable.
       if(u.pathname==="/admin/app.js" && request.method==="GET"){
-        return new Response(ADMIN_APP_JS,{status:200,headers:{"content-type":"text/javascript; charset=utf-8","cache-control":"no-store","x-territory-build":"G124"}});
+        return new Response(ADMIN_APP_JS,{status:200,headers:{"content-type":"text/javascript; charset=utf-8","cache-control":"no-store","x-territory-build":"G112"}});
       }
 
       if(u.pathname==="/admin" && request.method==="GET"){
         const auth=await verifyAdminToken(cookies(request)[ADMIN_COOKIE],env);
-        return new Response(adminHTML(auth),{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store","x-territory-build":"G124"}});
+        return new Response(adminHTML(auth),{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store","x-territory-build":"G112"}});
       }
 
       if(u.pathname==="/admin/login" && request.method==="POST"){
@@ -1118,9 +1119,9 @@ export default {
           const stub=env.DB.get(env.DB.idFromName("global"));
           const r=await dbCall(stub,"/db/test-admin-query");
           const text=await r.text();
-          return new Response(text,{status:r.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-territory-build":"G124"}});
+          return new Response(text,{status:r.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-territory-build":"G112"}});
         }catch(e){
-          return json({ok:false,error:String(e?.message||e),stage:"worker-call"},500,{"cache-control":"no-store","x-territory-build":"G124"});
+          return json({ok:false,error:String(e?.message||e),stage:"worker-call"},500,{"cache-control":"no-store","x-territory-build":"G112"});
         }
       }
 
@@ -1129,9 +1130,9 @@ export default {
           const stub=env.DB.get(env.DB.idFromName("global"));
           const r=await dbCall(stub,"/db/test-simple");
           const text=await r.text();
-          return new Response(text,{status:r.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-territory-build":"G124"}});
+          return new Response(text,{status:r.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-territory-build":"G112"}});
         }catch(e){
-          return json({ok:false,error:String(e?.message||e),stage:"worker-call"},500,{"cache-control":"no-store","x-territory-build":"G124"});
+          return json({ok:false,error:String(e?.message||e),stage:"worker-call"},500,{"cache-control":"no-store","x-territory-build":"G112"});
         }
       }
 
@@ -1141,9 +1142,9 @@ export default {
         try{
           const stub=env.DB.get(env.DB.idFromName("global"));
           const result=await dbJSON(stub,"/db/health");
-          return json({ok:true,diagnostic:"db-health",...result},200,{"cache-control":"no-store","x-territory-build":"G124"});
+          return json({ok:true,diagnostic:"db-health",...result},200,{"cache-control":"no-store","x-territory-build":"G112"});
         }catch(e){
-          return json({ok:false,diagnostic:"db-health",error:e?.message||String(e),stack:e?.stack||""},500,{"cache-control":"no-store","x-territory-build":"G124"});
+          return json({ok:false,diagnostic:"db-health",error:e?.message||String(e),stack:e?.stack||""},500,{"cache-control":"no-store","x-territory-build":"G112"});
         }
       }
 
@@ -1156,7 +1157,7 @@ export default {
         const hub=env.ARENA_HUB.get(env.ARENA_HUB.idFromName("global"));
         if(request.method==="GET") return new Response(await (await hub.fetch(new Request("https://arena-hub.internal/admin/config"))).text(),{headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store"}});
         const cfg=await bodyJSON(request);
-        const r=await hub.fetch(new Request("https://arena-hub.internal/admin/config",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(cfg)}));
+        const r=await hub.fetch(new Request("https://arena-hub.internal/admin/config",{method:"POST",headers:{"content-type":"application/json",...corsHeaders()},body:JSON.stringify(cfg)}));
         return new Response(await r.text(),{status:r.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store"}});
       }
 
@@ -1167,7 +1168,7 @@ export default {
         const requirePerm=(perm)=>{
           if(!adminCan(auth,perm)) throw new Response(
             JSON.stringify({error:"Недостаточно прав"}),
-            {status:403,headers:{"content-type":"application/json"}}
+            {status:403,headers:{"content-type":"application/json",...corsHeaders()}}
           );
         };
 
@@ -1253,6 +1254,14 @@ export default {
       const p=await playerFromTelegram(request,env,stub);
       const id=p.telegram_id;
 
+      if(u.pathname==="/api/player" && request.method==="GET") return json({ok:true,player:await dbJSON(stub,"/db/player?id="+encodeURIComponent(id)),state:await dbJSON(stub,"/db/state?id="+encodeURIComponent(id))});
+      if(u.pathname==="/api/economy" && request.method==="GET") return json({ok:true,economy:await dbJSON(stub,"/db/economy?id="+encodeURIComponent(id))});
+      if(u.pathname==="/api/state" && request.method==="GET") return json({ok:true,state:await dbJSON(stub,"/db/state?id="+encodeURIComponent(id))});
+      if(u.pathname==="/api/state" && request.method==="POST"){const x=await bodyJSON(request);return json({ok:true,state:await dbJSON(stub,"/db/state","POST",{id,state:x.state||{}}),player:await dbJSON(stub,"/db/player?id="+encodeURIComponent(id))});}
+      if(u.pathname==="/api/migrate" && request.method==="POST") return json({ok:true,skipped:true,reason:"First live test starts from server-owned fresh state"});
+      if(u.pathname==="/api/pve/start" && request.method==="POST"){const x=await bodyJSON(request);return json(await dbJSON(stub,"/db/pve/start","POST",{id,chapter:x.chapter,stage:x.stage,boss:!!x.boss}));}
+      if(u.pathname==="/api/pve/action" && request.method==="POST"){const x=await bodyJSON(request);return json(await dbJSON(stub,"/db/pve/action","POST",{id,session_id:x.session_id,nonce:x.nonce,action:x.action}));}
+      if(u.pathname==="/api/pve/complete" && request.method==="POST"){const x=await bodyJSON(request);return json(await dbJSON(stub,"/db/pve/complete","POST",{id,session_id:x.session_id}));}
       if(u.pathname==="/api/auth") return json({
         ok:true,player:{
           id,username:p.username,first_name:p.first_name,level:p.level,exp:p.exp,
@@ -1262,24 +1271,13 @@ export default {
 
       if(u.pathname==="/api/me")return json({player:p});
 
-      if(u.pathname==="/api/economy" && request.method==="GET")
-        return json({ok:true,economy:{coins:Number(p.coins)||0,gems:Number(p.gems)||0},source:"server"});
-
       if(u.pathname==="/api/progress" && request.method==="POST"){
         const x=await bodyJSON(request),patch={};
-        for(const k of ["hp","max_hp","strength","agility","defense","weapon"])
+        for(const k of ["level","exp","hp","max_hp","coins","gems","strength","agility","defense","weapon"])
           if(x[k]!==undefined)patch[k]=x[k];
-        const result=await dbJSON(stub,"/db/progress","POST",{id,patch});
-        return json({ok:true,player:result,ignored_client_fields:["coins","gems","level","exp"]});
-      }
-
-      if(u.pathname==="/api/xp/award" && request.method==="POST"){
-        const x=await bodyJSON(request);
-        const amount=Math.max(0,Math.min(100000,n(x.amount)));
-        const source=s(x.source||"game").slice(0,40);
-        const reference=s(x.reference||"").slice(0,160);
-        if(!reference) return json({error:"XP reference is required"},400);
-        return json(await dbJSON(stub,"/db/xp-award","POST",{id,amount,source,reference}));
+        // For production, client-supplied currency should be replaced by authoritative
+        // game events. This endpoint is kept for progress synchronization.
+        return json(await dbJSON(stub,"/db/progress","POST",{id,patch}));
       }
 
       if(u.pathname==="/api/shop")return json(await dbJSON(stub,"/db/shop"));

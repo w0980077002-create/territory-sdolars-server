@@ -1,34 +1,35 @@
-# Territory — Cloudflare Hardening 10STEP
+# Territory — FIRST LIVE TEST 01
 
-## Реальная база
-Это пакет поверх найденного Cloudflare Worker G123/PASS55. Production URL из найденного manifest: `https://territory-sdolars-server.w0660077702.workers.dev`.
+Цель: довести первый живой тест до цепочки Telegram → Render → Cloudflare → игрок → PvE/Arena → сохранение.
 
-### 10 шагов
-1. Клиентские `coins` больше не принимаются через `/api/progress`.
-2. Клиентские `gems` больше не принимаются через `/api/progress`.
-3. Серверный баланс возвращается после legacy sync.
-4. Добавлен read-only `/api/economy`.
-5. Arena reward остаётся серверным и идемпотентным по `room_id + telegram_id`.
-6. Mail claim остаётся серверным.
-7. Shop purchase остаётся серверным.
-8. Telegram WebApp HMAC auth остаётся обязательным перед игровыми API.
-9. Existing Durable Object bindings/migrations не изменяются.
-10. Build marker поднят до G124 для проверки именно этой версии после выкладки.
-11. Legacy `/api/progress` больше не принимает `level`/`exp` от клиента.
-12. Добавлен серверный `/api/xp/award`.
-13. XP-награды получают обязательный уникальный `reference` и становятся идемпотентными.
-14. Формула уровня сохранена: `100 × текущий уровень` XP на следующий уровень.
-15. Arena XP теперь также фиксируется в общем XP ledger.
+## Что исправлено
+- Telegram `/start` и `/game`: исправлена ссылка на реального бота `@TerritoryGameBot` (ранее была опечатка `@TeritoryGameBot`).
+- Добавлен CORS для Render → Cloudflare WebApp API.
+- Добавлены совместимые `/api/player`, `/api/economy`, `/api/state`, `/api/migrate`.
+- `/api/progress` больше не принимает coins/gems/level/exp от клиента.
+- Добавлены серверные PvE session/start/action/complete с nonce, таймаутом, минимальной длительностью, серверным уроном/победой, XP, наградой и loot.
+- Добавлен `/api/health` с маркером FIRST-TEST-01.
+- Сохранена текущая Cloudflare Arena RoomHub: живые игроки имеют приоритет, боты заполняют свободные места.
+
+## Telegram
+После деплоя один раз открыть:
+`https://territory-sdolars-server.w0660077002.workers.dev/api/setup-telegram-webhook`
+
+Проверка:
+`https://territory-sdolars-server.w0660077002.workers.dev/api/telegram-webhook-info`
+
+Ожидаем webhook:
+`https://territory-sdolars-server.w0660077002.workers.dev/telegram/webhook`
+
+## Cloudflare secrets
+Не менять и не удалять существующие secrets. Нужен действующий `BOT_TOKEN` (или `TELEGRAM_BOT_TOKEN`) как в текущем Worker.
+
+## Client
+Файлы из `territory-game/` кладутся в корень Render-репозитория с заменой одноимённых файлов.
+`territory-telegram-auth-pass54.js` по умолчанию направляет API на:
+`https://territory-sdolars-server.w0660077002.workers.dev`
+
+Новый `territory-live-arena-bridge.js` автоматически подключается после Telegram auth и перехватывает `ArenaGame.open()`, поэтому для первого теста не требуется менять index.html.
 
 ## Важно
-Production deployment НЕ выполнялся. Этот пакет — подготовленный source для ручной загрузки в Cloudflare. Secrets не меняются.
-
-`level/exp` теперь серверные. Старый `/api/progress` принимает только совместимые боевые/profile-поля и игнорирует `level`/`exp`.
-
-### Новый XP API
-`POST /api/xp/award` после Telegram auth:
-`{"amount":15,"source":"pve","reference":"pve:chapter:1:stage:1"}`
-
-`reference` обязателен и уникален на игрока. Повтор той же награды возвращает `awarded:0` и `duplicate:true`.
-
-Важно: клиент сам по себе не получает права назначать себе XP — источник должен вызывать этот endpoint как игровой event-контур; в следующем интеграционном пакете конкретные PvE/quest/reward источники будут переведены на него.
+Production deployment здесь НЕ выполнен. Сначала загрузить Worker в Cloudflare и дождаться успешного deploy, затем проверить webhook и Render.
