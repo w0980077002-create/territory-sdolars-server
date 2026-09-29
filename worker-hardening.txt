@@ -1,0 +1,44 @@
+CURRENT SERVER FINDING
+----------------------
+Public POST /api/state reaches saveGameState(id, state).
+Current saveGameState deletes currency/level/xp, but still accepts progression,
+PvE, inventory, forge and Battle-Stone fields from the client.
+
+REQUIRED CHANGE
+---------------
+Change:
+  saveGameState(id,raw){ ... }
+to:
+  saveGameState(id,raw,trusted=false){ ... }
+
+When trusted=false, remove these fields from client input:
+  currentChapter
+  chapterStage
+  chapterProgress
+  chapterBossUnlocked
+  chapterBossDefeated
+  chapterCompleted
+  battleStones
+  battleStonesBonus
+  battleStonesDate
+  battleStonesCap
+  pve
+  inventoryItems
+  lootFound
+  forge
+  totalChaptersCompleted
+  chapterRewardsClaimed
+  coins / gems / redGems / red_gems
+  level / xp / xpNext
+
+Then keep only non-authoritative state (HP/UI/equipment/follower presentation/etc.)
+with strict numeric/array bounds.
+
+The two INTERNAL PvE writes must use:
+  this.saveGameState(id,s,true)
+
+Those are the calls inside pveStart() and pveComplete().
+The public /db/state POST remains untrusted.
+
+Do not simply delete all state saving: the PvE server itself needs to persist its
+server-generated chapter/inventory state.
