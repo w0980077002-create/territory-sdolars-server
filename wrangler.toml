@@ -10,17 +10,22 @@ class_name = "TerritoryDB"
 name = "ARENA_HUB"
 class_name = "RoomHubSQLite"
 
-[exports.TerritoryDB]
+[exports.GameHub]
 type = "durable-object"
-storage = "sqlite"
+storage = "legacy-kv"
 
-# RoomHub was already provisioned by the older deployment as a legacy KV-backed DO.
-# Keep it declared so the existing namespace is preserved, but do not bind it.
+[exports.PresenceHub]
+type = "durable-object"
+storage = "legacy-kv"
+
 [exports.RoomHub]
 type = "durable-object"
 storage = "legacy-kv"
 
-# New Arena namespace: SQLite-backed, compatible with Workers Free.
+[exports.TerritoryDB]
+type = "durable-object"
+storage = "sqlite"
+
 [exports.RoomHubSQLite]
 type = "durable-object"
 storage = "sqlite"
