@@ -1,0 +1,17 @@
+'use strict';
+const assert = require('node:assert/strict');
+const { applyTransaction, snapshot } = require('./economy-ledger');
+let saved = 0;
+const p = { economy: { coins: 0, gems: 0, red_gems: 0, vip: 0, ledger: [] } };
+const persist = () => { saved++; };
+const event = { id: 'battle:verified:001', reason: 'verified_battle', delta: { coins: 25 } };
+assert.equal(applyTransaction(p, event, persist).applied, true);
+assert.equal(snapshot(p.economy).coins, 25);
+assert.equal(applyTransaction(p, event, persist).applied, false);
+assert.equal(saved, 1);
+assert.throws(() => applyTransaction(p, { ...event, delta: { coins: 999 } }, persist), /conflict/);
+assert.throws(() => applyTransaction(p, { id: 'battle:verified:002', reason: 'verified_battle', delta: { coins: -26 } }, persist), /Insufficient/);
+assert.throws(() => applyTransaction(p, { id: 'battle:verified:003', reason: 'verified_battle', delta: { red_gems: 1.5 } }, persist), /integer/);
+assert.equal(snapshot(p.economy).coins, 25);
+assert.equal(saved, 1);
+console.log('PASS: idempotency, conflict, overdraft, fractional rejection, persistence');

@@ -1,0 +1,60 @@
+'use strict';
+// FOUNDATION-01B: server-only economy mutation. Never expose applyTransaction as an HTTP action.
+const crypto = require('crypto');
+const LIMITS = Object.freeze({ coins: 100000000000, gems: 1000000000, red_gems: 1000000000 });
+const CURRENCIES = Object.keys(LIMITS);
+function integer(value, label) {
+  if (!Number.isSafeInteger(value)) throw new Error(`Invalid integer: ${label}`);
+  return value;
+}
+function normalize(e) {
+  if (!e || typeof e !== 'object') e = {};
+  for (const key of CURRENCIES) {
+    const n = Number(e[key]);
+    e[key] = Number.isSafeInteger(n) && n >= 0 && n <= LIMITS[key] ? n : 0;
+  }
+  const vip = Number(e.vip);
+  e.vip = Number.isSafeInteger(vip) && vip >= 0 && vip <= 100 ? vip : 0;
+  e.economy_version = Math.max(1, Number(e.economy_version) || 1);
+  e.ledger = Array.isArray(e.ledger) ? e.ledger.slice(-200) : [];
+  e.receipts = e.receipts && typeof e.receipts === 'object' && !Array.isArray(e.receipts) ? e.receipts : {};
+  return e;
+}
+function snapshot(e) {
+  const x = normalize(e);
+  return { coins: x.coins, gems: x.gems, red_gems: x.red_gems, vip: x.vip, economy_version: x.economy_version };
+}
+// transactionId must originate from a verified SERVER event (battle verification, payment webhook etc).
+// Replays are idempotent, including when older ledger entries have been trimmed.
+function applyTransaction(player, transaction, persist) {
+  if (!player || typeof player !== 'object') throw new Error('Missing player');
+  const { id, reason, delta } = transaction || {};
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9:_-]{8,160}$/.test(id)) throw new Error('Invalid transaction id');
+  if (typeof reason !== 'string' || !/^[a-z][a-z0-9_-]{2,63}$/.test(reason)) throw new Error('Invalid reason');
+  if (!delta || typeof delta !== 'object' || Array.isArray(delta)) throw new Error('Invalid delta');
+  if (Object.keys(delta).some(k => !CURRENCIES.includes(k))) throw new Error('Unsupported currency');
+  if (!Object.keys(delta).length) throw new Error('Empty delta');
+  const original = normalize(player.economy);
+  const digest = crypto.createHash('sha256').update(JSON.stringify({ id, reason, delta: CURRENCIES.map(k => delta[k] || 0) })).digest('hex');
+  if (original.receipts[id]) {
+    if (original.receipts[id] !== digest) throw new Error('Transaction id conflict');
+    return { applied: false, economy: snapshot(original) };
+  }
+  const next = { ...original, ledger: original.ledger.slice(), receipts: { ...original.receipts } };
+  for (const k of CURRENCIES) {
+    const change = integer(delta[k] === undefined ? 0 : delta[k], k);
+    const value = next[k] + change;
+    if (!Number.isSafeInteger(value) || value < 0 || value > LIMITS[k]) throw new Error(`Insufficient balance or overflow: ${k}`);
+    next[k] = value;
+  }
+  next.economy_version = integer(original.economy_version, 'economy_version') + 1;
+  next.receipts[id] = digest;
+  next.ledger.push({ id, reason, delta: Object.fromEntries(CURRENCIES.map(k => [k, delta[k] || 0])), at: new Date().toISOString(), version: next.economy_version });
+  next.ledger = next.ledger.slice(-200);
+  // Persist synchronously. Roll back in-memory player on failure.
+  const previous = player.economy;
+  player.economy = next;
+  try { persist(); } catch (error) { player.economy = previous; throw error; }
+  return { applied: true, economy: snapshot(next) };
+}
+module.exports = { normalize, snapshot, applyTransaction };

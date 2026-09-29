@@ -4,6 +4,7 @@ const http = require('http');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { normalize: normalizeEconomy, snapshot: economySnapshot } = require('./economy-ledger');
 
 const PORT = Number(process.env.PORT || 10001);
 const BOT_TOKEN = String(process.env.TELEGRAM_BOT_TOKEN || '');
@@ -302,11 +303,7 @@ function playerFor(user) {
     };
   }
 
-  p.economy.coins = num(p.economy.coins, 0, 100000000000, 0);
-  p.economy.gems = num(p.economy.gems, 0, 1000000000, 0);
-  p.economy.red_gems = num(p.economy.red_gems, 0, 1000000000, 0);
-  p.economy.vip = num(p.economy.vip, 0, 100, 0);
-  p.economy.ledger = Array.isArray(p.economy.ledger) ? p.economy.ledger.slice(-100) : [];
+  p.economy = normalizeEconomy(p.economy);
 
   p.updated_at = nowIso();
   save(db);
@@ -381,7 +378,47 @@ function syncState(p, raw) {
   return state;
 }
 
-const routes = new Set(['/api/auth', '/api/player', '/api/migrate', '/api/progress', '/api/state']);
+
+function pveSessionStart(p, chapter, stage, boss) {
+  const s = p.state || {};
+  const ch = Math.max(1, Math.min(240, Number(chapter) || 1));
+  const st = Math.max(1, Math.min(4, Number(stage) || 1));
+  if (ch !== Math.max(1, Number(s.currentChapter) || 1)) throw new Error('Chapter mismatch');
+  if (!boss && st !== Math.max(1, Number(s.chapterStage) || 1)) throw new Error('Stage mismatch');
+  if (boss && !s.chapterBossUnlocked) throw new Error('Boss is not unlocked');
+  const bonus = Math.max(0, Number(s.battleStonesBonus) || 0);
+  const stones = Math.max(0, Number(s.battleStones) || 0);
+  if (bonus <= 0 && stones <= 0) throw new Error('No battle stones');
+  p.battle_sessions = p.battle_sessions || {};
+  const id = crypto.randomUUID();
+  p.battle_sessions[id] = { id, chapter: ch, stage: st, boss: !!boss, created_at: Date.now(), completed: false };
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [key, value] of Object.entries(p.battle_sessions)) if (!value || Number(value.created_at) < cutoff || value.completed) delete p.battle_sessions[key];
+  p.updated_at = nowIso(); save(db);
+  return { session_id: id };
+}
+
+function pveSessionComplete(p, sessionId) {
+  const session = (p.battle_sessions || {})[String(sessionId || '')];
+  if (!session || session.completed) throw new Error('Invalid or already completed battle session');
+  if (Date.now() - Number(session.created_at) > 30 * 60 * 1000) throw new Error('Battle session expired');
+  session.completed = true;
+  const chapter = session.chapter;
+  const boss = !!session.boss;
+  const milestone = boss && chapter % 10 === 0;
+  const reward = boss
+    ? { coins: milestone ? 1250 : 500, gems: milestone ? 25 : 5, red_gems: 0 }
+    : { coins: 25, gems: 0, red_gems: 0 };
+  const tx = require('./economy-ledger').applyTransaction(p, {
+    id: 'pve:' + session.id,
+    reason: boss ? 'pve_boss_reward' : 'pve_stage_reward',
+    delta: reward
+  }, () => save(db));
+  p.updated_at = nowIso(); save(db);
+  return { reward, economy: tx.economy };
+}
+
+const routes = new Set(['/api/auth', '/api/player', '/api/migrate', '/api/progress', '/api/state', '/api/economy', '/api/pve/start', '/api/pve/complete']);
 
 const server = http.createServer(async (req, res) => {
   cors(req, res);
@@ -399,7 +436,7 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         service: 'territory-server',
         version: 3,
-        foundation: '01A'
+        foundation: '01C'
       });
     }
 
@@ -426,6 +463,10 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    if (req.method === 'GET' && u.pathname === '/api/economy') {
+      return json(res, 200, { ok: true, economy: economySnapshot(player.economy) });
+    }
+
     if (req.method === 'GET' && u.pathname === '/api/state') {
       return json(res, 200, {
         ok: true,
@@ -442,6 +483,18 @@ const server = http.createServer(async (req, res) => {
         player: publicPlayer(player),
         state: player.state || null
       });
+    }
+
+    if (req.method === 'POST' && u.pathname === '/api/pve/start') {
+      const data = await body(req);
+      const started = pveSessionStart(player, data.chapter, data.stage, !!data.boss);
+      return json(res, 200, { ok: true, session_id: started.session_id, player: publicPlayer(player) });
+    }
+
+    if (req.method === 'POST' && u.pathname === '/api/pve/complete') {
+      const data = await body(req);
+      const completed = pveSessionComplete(player, data.session_id);
+      return json(res, 200, { ok: true, reward: completed.reward, economy: completed.economy, player: publicPlayer(player) });
     }
 
     if (req.method === 'POST' && u.pathname === '/api/state') {
@@ -463,5 +516,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`[Territory] server listening on :${PORT} · foundation 01A`);
+  console.log(`[Territory] server listening on :${PORT} · foundation 01C`);
 });
