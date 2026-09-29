@@ -1,0 +1,43 @@
+TERRITORY — CORRECTED CLOUDFLARE 10097 AUDIT
+Date: 2026-09-29
+
+ROOT CAUSE CONFIRMED:
+The current live binding was ARENA_HUB -> RoomHub, while RoomHub was originally
+created with the legacy `new_classes` migration (KV-backed Durable Object).
+
+Cloudflare code 10097 is the Free-plan Durable Objects restriction: the Worker
+cannot use a legacy KV-backed Durable Object on the Free plan. Cloudflare's
+current docs state that Workers Free supports only SQLite-backed Durable Objects,
+while legacy KV-backed namespaces remain for existing namespaces on supported
+accounts.
+
+WHY THE PREVIOUS PACKAGE WAS WRONG:
+We restored v5 to `new_classes = ["RoomHub"]`. That was correct for preserving the
+old namespace, but it still left the live Worker binding pointed at that legacy
+KV-backed class. Therefore Cloudflare correctly continued to return 10097.
+
+CORRECT FIX:
+1. Keep historical v5 exactly as it was:
+   v5 -> new_classes = ["RoomHub"]
+2. DO NOT rewrite v5.
+3. Create a NEW Durable Object class:
+   RoomHubSQLite
+4. Create it with a NEW migration:
+   v6 -> new_sqlite_classes = ["RoomHubSQLite"]
+5. Change only the live ARENA_HUB binding:
+   ARENA_HUB -> RoomHubSQLite
+6. Keep old RoomHub exported only for historical migration compatibility.
+7. The Arena implementation is duplicated into RoomHubSQLite and uses the same
+   KV storage API (`ctx.storage.get/put`), which is supported by SQLite-backed DOs.
+   No SQL-specific code is required for Arena.
+
+This does NOT migrate old RoomHub arena state. The old Arena state is ephemeral
+matchmaking/combat state; the new SQLite Arena starts with an empty state. The
+player database is separate in TerritoryDB and is preserved.
+
+VERIFICATION:
+- node --check worker.js: PASS
+- old v5 migration preserved
+- new v6 SQLite migration added
+- live ARENA_HUB binding points to RoomHubSQLite
+- no storage-backend mutation of existing RoomHub

@@ -485,6 +485,110 @@ export class RoomHub extends DurableObject{
  async alarm(){await this.tick();}
 }
 
+export class RoomHubSQLite extends DurableObject{
+ constructor(ctx,env){super(ctx,env);this.ctx=ctx;this.env=env;this.sockets=new Map();}
+ async state(){let s=await this.ctx.storage.get("arena");if(!s)s={config:arenaDefaultConfig(),queues:{duel:[],group:[],chaos:[]},rooms:{},left:{},recent:[]};
+  s.config={...arenaDefaultConfig(),...(s.config||{})};s.queues=s.queues||{duel:[],group:[],chaos:[]}; s.queues.chaos=s.queues.chaos||[];s.rooms=s.rooms||{};s.left=s.left||{};s.recent=s.recent||[];
+  for(const r of Object.values(s.rooms)){r.actions=r.actions||[];r.rewardsClaimed=r.rewardsClaimed||{};r.turnSeq=Number(r.turnSeq||1);r.lastActionAt=Number(r.lastActionAt||r.createdAt||Date.now());}
+  return s;}
+ async save(s){await this.ctx.storage.put("arena",s);}
+ send(id,data){const ws=this.sockets.get(String(id));if(ws)try{ws.send(JSON.stringify(data))}catch{}}
+ broadcast(ids,data){ids.forEach(id=>this.send(id,data))}
+ async fetch(req){
+  const u=new URL(req.url);
+  if(u.pathname==="/admin/config"){const s=await this.state();if(req.method==="GET")return new Response(JSON.stringify({ok:true,config:s.config}),{headers:{"content-type":"application/json"}});
+   const b=await req.json().catch(()=>({}));s.config={...s.config,...b};await this.save(s);return new Response(JSON.stringify({ok:true,config:s.config}),{headers:{"content-type":"application/json"}});}
+  if(req.headers.get("Upgrade")?.toLowerCase()!=="websocket")return new Response("WebSocket required",{status:426});
+  const id=u.searchParams.get("telegram_id");if(!id)return new Response("Unauthorized",{status:401});
+  const pair=new WebSocketPair(),ws=pair[1];ws.accept();this.sockets.set(String(id),ws);
+  ws.addEventListener("message",e=>this.message(String(id),String(e.data)));
+  ws.addEventListener("close",()=>{if(this.sockets.get(String(id))===ws)this.sockets.delete(String(id));});
+  const st=await this.state(); this.send(id,{type:"hello",config:st.config});
+  const room=Object.values(st.rooms).find(r=>!r.ended&&r.players.some(p=>p.id===String(id)&&!p.left));
+  if(room) this.send(id,{type:"reconnect_state",selfId:String(id),room:publicRoom(room),turnSeq:room.turnSeq,activeId:room.activeId||null});
+  else {const queued=Object.entries(st.queues).find(([,q])=>q.some(x=>x.id===String(id)));if(queued)this.send(id,{type:"queued",mode:queued[0],eta:15});}
+  return new Response(null,{status:101,webSocket:pair[0]});
+ }
+ async message(id,raw){let m;try{m=JSON.parse(raw)}catch{return}const s=await this.state();
+  try{
+   if(m.type==="queue")await this.queue(s,id,m);
+   else if(m.type==="leave")await this.leave(s,id);
+   else if(m.type==="attack")await this.attack(s,id,m);
+   else if(m.type==="team")await this.team(s,id,m.team);
+  }catch(e){this.send(id,{type:"error",message:e.message||"Arena error"});}
+ }
+ async queue(s,id,m){
+  const mode=m.mode==="duel"?"duel":m.mode==="group"?"group":m.mode==="chaos"?"chaos":null;if(!mode)throw Error("Неизвестный режим");
+  if(s.left[id])throw Error("Повторный вход в этот бой запрещён");
+  const active=Object.values(s.rooms).find(r=>!r.ended&&r.players.some(p=>p.id===id&&!p.left));if(active)throw Error("Игрок уже находится в бою");
+  for(const q of Object.values(s.queues))q.splice(0,q.length,...q.filter(x=>x.id!==id));
+  const item={id,name:String(m.name||"Игрок"),level:Math.max(1,Number(m.level)||1),joinedAt:Date.now()};
+  s.queues[mode].push(item);
+  if(mode==="duel"&&s.queues.duel.length>=2){const q=s.queues.duel.splice(0,2);await this.start(s,mode,[makeHuman(q[0].id,q[0].name,q[0].level,1),makeHuman(q[1].id,q[1].name,q[1].level,2)]);return;}
+  if(mode==="group"&&s.queues.group.length>=2){const q=s.queues.group.splice(0,2),lv=Math.round((q[0].level+q[1].level)/2),p=[makeHuman(q[0].id,q[0].name,q[0].level,1),makeHuman(q[1].id,q[1].name,q[1].level,2)];
+   let z=0;for(const t of [1,1,2,2])p.push(makeBot(z++,lv,t));await this.start(s,mode,p);return;}
+  if(mode==="chaos"&&s.queues.chaos.length>=2){const q=s.queues.chaos.splice(0,Math.min(2,s.queues.chaos.length)),p=[makeHuman(q[0].id,q[0].name,q[0].level,1)];if(q[1])p.push(makeHuman(q[1].id,q[1].name,q[1].level,2));await this.start(s,mode,p);return;}
+  this.send(id,{type:"queued",mode,eta:mode==="duel"?15:20});await this.save(s);await this.ctx.storage.setAlarm(Date.now()+15000);
+ }
+ async start(s,mode,players){
+  const first=players.find(p=>!p.defeated&&!p.left);
+  const r={id:`${mode}-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,mode,createdAt:Date.now(),endsAt:Date.now()+180000,round:1,turnSeq:1,activeId:first?.id||null,lastActionAt:Date.now(),actions:[],rewardsClaimed:{},players,log:[],ended:false};
+  s.rooms[r.id]=r;await this.save(s);for(const p of players.filter(p=>!p.bot))this.send(p.id,{type:"room_start",selfId:p.id,turnSeq:r.turnSeq,activeId:r.activeId,room:publicRoom(r)});await this.ctx.storage.setAlarm(Date.now()+8000);
+ }
+ async leave(s,id){for(const r of Object.values(s.rooms)){const p=r.players.find(x=>x.id===id);if(p&&!r.ended){p.left=true;s.left[id]=r.id;this.broadcast(r.players.filter(x=>!x.bot&&!x.left).map(x=>x.id),{type:"player_left",id});}}
+  for(const q of Object.values(s.queues))q.splice(0,q.length,...q.filter(x=>x.id!==id));await this.save(s);}
+ async team(s,id,t){for(const q of Object.values(s.queues))for(const x of q)if(x.id===id)x.team=Number(t)===2?2:1;await this.save(s);}
+ async attack(s,id,m){
+  const r=Object.values(s.rooms).find(x=>!x.ended&&x.players.some(p=>p.id===id&&!p.left));if(!r)throw Error("Бой не найден");
+  const me=r.players.find(p=>p.id===id);if(!me||me.bot)throw Error("Недоступный игрок");
+  if(r.activeId!==String(id))throw Error("Сейчас ход другого игрока");
+  const actionId=s(String(m.actionId||"")).slice(0,80);if(!actionId)throw Error("actionId обязателен");
+  if(r.actions.includes(actionId)){this.send(id,{type:"duplicate_ignored",actionId,turnSeq:r.turnSeq});return;}
+  const seq=n(m.turnSeq,0);if(seq!==r.turnSeq)throw Error("Устаревший ход");
+  if(Date.now()-r.lastActionAt>ARENA_TURN_TIMEOUT_MS){await this.advanceTurn(s,r,true);throw Error("Ход просрочен");}
+  r.actions.push(actionId);if(r.actions.length>ARENA_MAX_ACTION_CACHE)r.actions=r.actions.slice(-ARENA_MAX_ACTION_CACHE);
+  const targetId=s(m.targetId),target=r.players.find(p=>p.id===targetId&&!p.left&&!p.defeated&&p.team!==me.team);if(!target)throw Error("Недопустимая цель");
+  const allowed=new Set(["head","chest","waist","legs"]),defense=Array.isArray(m.defense)?m.defense.filter(x=>allowed.has(String(x))).slice(0,4):[];
+  let hit=Math.max(4,Math.round((me.strength+me.level*.8)*(.88+Math.random()*.28))),crit=false;const enemyAttack=["head","chest","waist","legs"][rand(0,3)];
+  if(Math.random()<me.crit){hit=Math.round(hit*1.8);crit=true;}if(defense.includes(enemyAttack))hit=Math.round(hit*.18);if(Math.random()<target.dodge)hit=0;hit=Math.max(0,hit-Math.round(target.defense*.35));
+  target.hp=Math.max(0,target.hp-hit);r.log.push(`⚔️ ${me.name} → ${target.name}: −${hit} HP${crit?" 💥 КРИТ":""}`);if(target.hp<=0){target.defeated=true;r.log.push(`💀 ${target.name} повержен`);}
+  await this.botTurns(r,me.team===1?2:1);const a=r.players.filter(p=>p.team===1&&!p.left&&!p.defeated).length,b=r.players.filter(p=>p.team===2&&!p.left&&!p.defeated).length;
+  if(!a||!b){r.ended=true;r.result=a?"Победа":"Поражение";await this.finish(s,r);return;}
+  await this.advanceTurn(s,r,false);
+ }
+ async advanceTurn(s,r,timedOut=false){
+  const living=r.players.filter(p=>!p.left&&!p.defeated);if(!living.length)return;const humans=living.filter(p=>!p.bot);const pool=humans.length?humans:living;const idx=Math.max(-1,pool.findIndex(p=>p.id===r.activeId));let next=pool[(idx+1+pool.length)%pool.length]||pool[0];r.activeId=next.id;r.turnSeq=Number(r.turnSeq||0)+1;r.lastActionAt=Date.now();if(timedOut)r.log.push(`⏱️ Ход пропущен по таймауту`);
+  await this.save(s);for(const p of r.players.filter(p=>!p.bot&&!p.left))this.send(p.id,{type:"state",selfId:p.id,turnSeq:r.turnSeq,activeId:r.activeId,room:publicRoom(r)});
+ }
+ async botTurns(r,team){const actors=r.players.filter(p=>p.bot&&p.team===team&&!p.defeated&&!p.left),targets=r.players.filter(p=>!p.defeated&&!p.left&&p.team!==team);
+  for(const a of actors){if(!targets.length)break;const t=targets[rand(0,targets.length-1)];let hit=Math.max(3,Math.round(a.strength*(.86+Math.random()*.28)));if(Math.random()<a.crit)hit=Math.round(hit*1.8);if(Math.random()<t.dodge)hit=0;hit=Math.max(0,hit-Math.round(t.defense*.3));t.hp=Math.max(0,t.hp-hit);r.log.push(`🤖 ${a.name} · ${a.roleTitle} → ${t.name}: −${hit} HP`);if(t.hp<=0){t.defeated=true;r.log.push(`💀 ${t.name} повержен`);}}
+ }
+ async finish(s,r){const win=r.result==="Победа"?1:2,humans=r.players.filter(p=>!p.bot&&!p.left),ids=humans.map(p=>p.id);s.recent.push({mode:r.mode,at:Date.now(),result:r.result,players:r.players.map(p=>({name:p.name,bot:p.bot,role:p.roleTitle||""}))});s.recent=s.recent.slice(-30);
+  for(const p of humans){
+   const reward=p.team===win?{coins:50,xp:15}:{coins:0,xp:0};
+   if((reward.coins||reward.xp)&&!r.rewardsClaimed[p.id]){try{const db=this.env.DB.get(this.env.DB.idFromName("global"));await dbCall(db,"/db/arena-reward","POST",{id:p.id,room_id:r.id,...reward});r.rewardsClaimed[p.id]=true;}catch(e){console.error("arena reward",e);}}
+   const personal=p.team===win?"Победа":"Поражение";this.send(p.id,{type:"result",selfId:p.id,result:personal,rewards:reward,room:publicRoom(r)});
+  }
+  await this.save(s);}
+ async tick(){
+  const s=await this.state();
+  for(const r of Object.values(s.rooms)){if(r.ended)continue;if(Date.now()>r.endsAt){r.ended=true;r.result="Время вышло";await this.finish(s,r);continue;}
+   if(r.activeId&&Date.now()-Number(r.lastActionAt||r.createdAt)>ARENA_TURN_TIMEOUT_MS){await this.advanceTurn(s,r,true);continue;}
+   if(r.players.every(p=>p.bot)&&Date.now()-r.createdAt>7000){await this.botTurns(r,1);await this.botTurns(r,2);const a=r.players.some(p=>p.team===1&&!p.defeated),b=r.players.some(p=>p.team===2&&!p.defeated);if(!a||!b){r.ended=true;r.result=a?"Победа":"Поражение";await this.finish(s,r);}}
+  }
+  const cutoff=Date.now()-15*60*1000;for(const [rid,r] of Object.entries(s.rooms)){if(r.ended&&Number(r.endsAt||0)<cutoff)delete s.rooms[rid];}for(const [id,rid] of Object.entries(s.left)){const r=s.rooms[rid];if(!r||Number(r.endsAt||0)<cutoff)delete s.left[id];}
+  for(const mode of ["duel","group"]){const q=s.queues[mode]||[];if(!q.length||!s.config.enabled||!botWindow(s.config))continue;if(Date.now()-q[0].joinedAt<15000)continue;
+   const h=q.shift();if(mode==="duel"&&s.config.fillDuel){const b=makeBot(rand(0,100000),h.level,2);await this.start(s,mode,[makeHuman(h.id,h.name,h.level,1),b]);}
+   if(mode==="group"&&s.config.fillGroup){const p=[makeHuman(h.id,h.name,h.level,1)];let z=0;for(const t of [1,1,2,2,2])p.push(makeBot(z++,h.level,t));await this.start(s,mode,p);}
+  }
+  if(s.config.enabled&&s.config.background&&botWindow(s.config)){const active=Object.values(s.rooms).filter(r=>!r.ended&&r.players.every(p=>p.bot)).length;if(active<Number(s.config.maxBackground||10)&&Math.random()<.6){
+    const mode=Math.random()<.55?"duel":"group",p=[];if(mode==="duel"){p.push(makeBot(rand(0,100000),10,1),makeBot(rand(0,100000),10,2));}else{for(const t of [1,1,1,2,2,2])p.push(makeBot(rand(0,100000),10,t));}await this.start(s,mode,p);}
+  }
+  await this.save(s);await this.ctx.storage.setAlarm(Date.now()+15000);
+ }
+ async alarm(){await this.tick();}
+}
+
 
 export class TerritoryDB extends DurableObject {
   constructor(ctx, env) {
