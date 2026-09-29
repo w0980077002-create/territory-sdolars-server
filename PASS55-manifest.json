@@ -1,8 +1,12 @@
 {
-  "stage":"G125",
-  "base":"G124",
-  "api":"https://territory-sdolars-server.w0660077702.workers.dev",
-  "xp_authority":true,
-  "legacy_progress_level_exp":false,
-  "production_deployed":false
+  "stage": "PASS55",
+  "api": "https://territory-sdolars-server.w0660077702.workers.dev",
+  "ui_unchanged": true,
+  "game_files": [
+    "game/index.html",
+    "game/state-sync.js"
+  ],
+  "server_files": [
+    "server/worker.js.PASS55.patch.txt"
+  ]
 }

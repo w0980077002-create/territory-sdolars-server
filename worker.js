@@ -544,11 +544,6 @@ export class TerritoryDB extends DurableObject {
         xp INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY(room_id,telegram_id)
       );
-      CREATE TABLE IF NOT EXISTS xp_awards(
-        telegram_id TEXT NOT NULL, reference TEXT NOT NULL, source TEXT NOT NULL DEFAULT '',
-        amount INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY(telegram_id,reference)
-      );
     `);
 
     const ensure = (table, defs) => {
@@ -622,9 +617,10 @@ export class TerritoryDB extends DurableObject {
 
   progress(id,p){
     this.init();
-    // Legacy sync endpoint: economy AND progression (level/XP) are server-owned.
-    // Only non-progression compatibility fields are accepted here.
-    const allowed=["hp","max_hp","strength","agility","defense","weapon"];
+    // Legacy sync endpoint: currencies are NEVER accepted from the client.
+    // Level/XP remain temporarily supported for compatibility with the old game
+    // client, while coins/gems are returned from the server unchanged.
+    const allowed=["level","exp","hp","max_hp","strength","agility","defense","weapon"];
     const sets=[],args=[];
     for(const k of allowed) if(p[k]!==undefined){
       sets.push(`${k}=?`);
@@ -634,24 +630,6 @@ export class TerritoryDB extends DurableObject {
     sets.push("updated_at=?"); args.push(now(),id);
     this.sql.exec(`UPDATE players SET ${sets.join(",")} WHERE telegram_id=?`,...args);
     return this.player(id);
-  }
-
-  awardXp(id,amount,source,reference){
-    this.init();
-    const player=this.sql.exec(`SELECT exp,level FROM players WHERE telegram_id=?`,id).toArray()[0];
-    if(!player) throw Error("Player not found");
-    const e=Math.max(0,Math.min(100000,n(amount)));
-    const src=s(source||"game").slice(0,40);
-    const ref=s(reference||"").slice(0,160);
-    if(!ref) throw Error("XP reference is required");
-    const claim=this.sql.exec(`INSERT OR IGNORE INTO xp_awards(telegram_id,reference,source,amount,created_at) VALUES(?,?,?,?,?)`,id,ref,src,e,now());
-    if(!claim.meta?.changes) return {player:this.player(id),awarded:0,duplicate:true,reference:ref};
-    let level=Math.max(1,n(player.level,1));
-    let exp=Math.max(0,n(player.exp))+e;
-    while(exp>=level*100){exp-=level*100;level++;}
-    this.sql.exec(`UPDATE players SET exp=?,level=?,updated_at=? WHERE telegram_id=?`,exp,level,now(),id);
-    this.event(id,"Progress","xp_award",JSON.stringify({source:src,reference:ref,amount:e,level,exp}));
-    return {player:this.player(id),awarded:e,duplicate:false,reference:ref};
   }
 
   catalog(){this.init();return this.sql.exec(
@@ -919,7 +897,6 @@ export class TerritoryDB extends DurableObject {
     let level=Math.max(1,n(p.level,1)), exp=Math.max(0,n(p.exp))+e;
     while(exp>=level*100){exp-=level*100;level++;}
     this.sql.exec(`UPDATE players SET coins=coins+?,exp=?,level=?,updated_at=? WHERE telegram_id=?`,c,exp,level,now(),id);
-    this.sql.exec(`INSERT OR IGNORE INTO xp_awards(telegram_id,reference,source,amount,created_at) VALUES(?,?,?,?,?)`,id,`arena:${room}`,"arena",e,now());
     this.recordFinance(id,"arena_reward",c);
     return this.player(id);
   }
@@ -975,7 +952,6 @@ export class TerritoryDB extends DurableObject {
       if(u.pathname==="/db/upsert"){const x=await b();return json(this.upsert(x.user));}
       if(u.pathname==="/db/player"){return json(this.player(u.searchParams.get("id")||""));}
       if(u.pathname==="/db/progress"){const x=await b();return json(this.progress(x.id,x.patch||{}));}
-      if(u.pathname==="/db/xp-award"){const x=await b();return json(this.awardXp(x.id,x.amount,x.source,x.reference));}
       if(u.pathname==="/db/shop"){return json(this.catalog());}
       if(u.pathname==="/db/buy"){const x=await b();return json(this.buy(x.id,x.item_id));}
       if(u.pathname==="/db/mail"){return json(this.mail(u.searchParams.get("id")||""));}
@@ -1267,19 +1243,11 @@ export default {
 
       if(u.pathname==="/api/progress" && request.method==="POST"){
         const x=await bodyJSON(request),patch={};
-        for(const k of ["hp","max_hp","strength","agility","defense","weapon"])
+        for(const k of ["level","exp","hp","max_hp","strength","agility","defense","weapon"])
           if(x[k]!==undefined)patch[k]=x[k];
         const result=await dbJSON(stub,"/db/progress","POST",{id,patch});
-        return json({ok:true,player:result,ignored_client_fields:["coins","gems","level","exp"]});
-      }
-
-      if(u.pathname==="/api/xp/award" && request.method==="POST"){
-        const x=await bodyJSON(request);
-        const amount=Math.max(0,Math.min(100000,n(x.amount)));
-        const source=s(x.source||"game").slice(0,40);
-        const reference=s(x.reference||"").slice(0,160);
-        if(!reference) return json({error:"XP reference is required"},400);
-        return json(await dbJSON(stub,"/db/xp-award","POST",{id,amount,source,reference}));
+        // Explicitly ignore client economy fields and return the authoritative balance.
+        return json({ok:true,player:result,ignored_client_economy:["coins","gems"]});
       }
 
       if(u.pathname==="/api/shop")return json(await dbJSON(stub,"/db/shop"));
