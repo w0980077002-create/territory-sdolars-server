@@ -18,9 +18,11 @@ storage = "legacy-kv"
 type = "durable-object"
 storage = "legacy-kv"
 
+# RoomHub was provisioned as SQLite by the earlier v5 migration.
+# Its storage type is immutable, so keep the existing namespace as SQLite.
 [exports.RoomHub]
 type = "durable-object"
-storage = "legacy-kv"
+storage = "sqlite"
 
 [exports.TerritoryDB]
 type = "durable-object"
