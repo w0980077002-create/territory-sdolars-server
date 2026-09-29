@@ -3,7 +3,7 @@
 Цель: довести первый живой тест до цепочки Telegram → Render → Cloudflare → игрок → PvE/Arena → сохранение.
 
 ## Что исправлено
-- Telegram `/start` и `/game`: исправлена ссылка на реального бота `@TerritoryGameBot` (ранее была опечатка `@TeritoryGameBot`).
+- Telegram `/start` и `/game`: исправлена ссылка на реального бота `@TeritoryGameBot` (ранее была опечатка `@TeritoryGameBot`).
 - Добавлен CORS для Render → Cloudflare WebApp API.
 - Добавлены совместимые `/api/player`, `/api/economy`, `/api/state`, `/api/migrate`.
 - `/api/progress` больше не принимает coins/gems/level/exp от клиента.

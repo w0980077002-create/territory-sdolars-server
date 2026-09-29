@@ -1005,7 +1005,7 @@ export class TerritoryDB extends DurableObject {
   }
 }
 
-const TELEGRAM_GAME_LINK = "https://t.me/TerritoryGameBot?startapp";
+const TELEGRAM_GAME_LINK = "https://t.me/TeritoryGameBot?startapp";
 
 async function telegramBotApi(env, method, payload={}) {
   const token = s(env.BOT_TOKEN || env.TELEGRAM_BOT_TOKEN);
@@ -1273,10 +1273,10 @@ export default {
 
       if(u.pathname==="/api/progress" && request.method==="POST"){
         const x=await bodyJSON(request),patch={};
-        for(const k of ["level","exp","hp","max_hp","coins","gems","strength","agility","defense","weapon"])
+        // Compatibility endpoint: only non-economy/non-XP combat fields are accepted.
+        // Level, XP, coins, gems and other server-owned progression cannot be written by the client.
+        for(const k of ["hp","max_hp","strength","agility","defense","weapon"])
           if(x[k]!==undefined)patch[k]=x[k];
-        // For production, client-supplied currency should be replaced by authoritative
-        // game events. This endpoint is kept for progress synchronization.
         return json(await dbJSON(stub,"/db/progress","POST",{id,patch}));
       }
 
