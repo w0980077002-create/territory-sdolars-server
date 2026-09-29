@@ -10,17 +10,20 @@ class_name = "TerritoryDB"
 name = "ARENA_HUB"
 class_name = "RoomHubSQLite"
 
-[[migrations]]
-tag = "v4"
-new_sqlite_classes = ["TerritoryDB"]
+[exports.TerritoryDB]
+type = "durable-object"
+storage = "sqlite"
 
-[[migrations]]
-tag = "v5"
-new_classes = ["RoomHub"]
+# RoomHub was already provisioned by the older deployment as a legacy KV-backed DO.
+# Keep it declared so the existing namespace is preserved, but do not bind it.
+[exports.RoomHub]
+type = "durable-object"
+storage = "legacy-kv"
 
-[[migrations]]
-tag = "v6"
-new_sqlite_classes = ["RoomHubSQLite"]
+# New Arena namespace: SQLite-backed, compatible with Workers Free.
+[exports.RoomHubSQLite]
+type = "durable-object"
+storage = "sqlite"
 
 [triggers]
 crons = ["0 3 * * *"]
