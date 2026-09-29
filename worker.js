@@ -1099,7 +1099,7 @@ async function telegramSendGame(env, chatId) {
     chat_id: chatId,
     text: "🏰 Territory — Sdolars\nДобро пожаловать! Открой игру и продолжай свой путь.",
     reply_markup: {
-      inline_keyboard: [[{text:"🎮 ИГРАТЬ", url: TELEGRAM_GAME_LINK}]]
+      inline_keyboard: [[{text:"🎮 ИГРАТЬ", web_app: {url:"https://teritory-game.onrender.com/"}}]]
     }
   });
 }
