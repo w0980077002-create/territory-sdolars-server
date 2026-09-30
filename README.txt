@@ -1,11 +1,13 @@
-TERRITORY SERVER PRO — DEPLOY-SAFE
+TERRITORY CLOUDFLARE FIX — v5 SQLite Durable Object migration
 
-Rebuilt from the cumulative server worker.
-The embedded admin JavaScript is now encoded as base64 at runtime instead of being stored as a giant escaped JS string. This removes the exact parser failure seen in Cloudflare builds (Unterminated string literal / Expected ';' but found 'card').
+Cloudflare build log showed the real blocker:
+new KV-backed Durable Object namespace was requested by migration v5 (new_classes = ["RoomHub"]).
+The account/build is on Workers Free, where new Durable Objects must use SQLite storage.
 
-Changed: worker.js only.
-No Durable Object bindings, migrations, secrets, routes, or game logic intentionally changed.
+Changed ONLY:
+  v5: new_classes = ["RoomHub"]
+into:
+  v5: new_sqlite_classes = ["RoomHub"]
 
-Validation:
-- node --check worker.js: PASS
-- ZIP integrity: PASS
+Do not change secrets or worker.js for this fix.
+Commit this wrangler.toml to main and let Cloudflare Build deploy automatically.

@@ -16,7 +16,7 @@ new_sqlite_classes = ["TerritoryDB"]
 
 [[migrations]]
 tag = "v5"
-new_classes = ["RoomHub"]
+new_sqlite_classes = ["RoomHub"]
 
 [triggers]
 crons = ["0 3 * * *"]
