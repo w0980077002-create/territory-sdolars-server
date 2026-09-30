@@ -1,13 +1,11 @@
-TERRITORY SERVER FIX 15 — FOLLOWERS + ARENA STATE AUTHORITY
+TERRITORY SERVER PRO — DEPLOY-SAFE
 
-Based on SERVER FIX 14.
+Rebuilt from the cumulative server worker.
+The embedded admin JavaScript is now encoded as base64 at runtime instead of being stored as a giant escaped JS string. This removes the exact parser failure seen in Cloudflare builds (Unterminated string literal / Expected ';' but found 'card').
 
-Changes:
-- normal /api/state sync can no longer overwrite followers/activeFollower/arena state;
-- fresh server state initializes Liabro as the owned active follower;
-- Arena live result now updates server-owned arena battles/wins/losses/rating (+25 win / -20 loss), matching the existing client Arena result math;
-- live Arena result still uses the existing server reward values and combat math;
-- arena reward is idempotent by room_id + telegram_id;
-- no PvE/battle math changes.
+Changed: worker.js only.
+No Durable Object bindings, migrations, secrets, routes, or game logic intentionally changed.
 
-Upload worker.js to the Cloudflare Worker when ready.
+Validation:
+- node --check worker.js: PASS
+- ZIP integrity: PASS
