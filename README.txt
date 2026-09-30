@@ -1,12 +1,13 @@
-TERRITORY CLOUDFLARE ARENA FIX 01
+TERRITORY SERVER FIX 15 — FOLLOWERS + ARENA STATE AUTHORITY
 
-Готовый worker.js из загруженного пользователем файла.
-Исправлена подтверждённая ошибка RoomHub.attack():
+Based on SERVER FIX 14.
 
-БЫЛО: const actionId=s(String(m.actionId||"")).slice(0,80);
-СТАЛО: const actionId=String(m.actionId||"").slice(0,80);
+Changes:
+- normal /api/state sync can no longer overwrite followers/activeFollower/arena state;
+- fresh server state initializes Liabro as the owned active follower;
+- Arena live result now updates server-owned arena battles/wins/losses/rating (+25 win / -20 loss), matching the existing client Arena result math;
+- live Arena result still uses the existing server reward values and combat math;
+- arena reward is idempotent by room_id + telegram_id;
+- no PvE/battle math changes.
 
-Причина: параметр s — объект состояния Arena, а не функция. На первом ударе старый код вызывал объект как функцию и получал TypeError.
-
-Заменять нужно worker.js целиком этим файлом.
-Другие файлы сервера этим пакетом не изменялись.
+Upload worker.js to the Cloudflare Worker when ready.
