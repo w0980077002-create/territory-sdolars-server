@@ -1,0 +1,124 @@
+*** BEGIN PATCH: territory-sdolars-server/worker.js
+
+1) Protect dailyCheckinDate from normal client state writes.
+Find the protectedKeys array in saveGameState() and add:
+    "dailyCheckinDate",
+
+2) Seed the extended shop catalog.
+Immediately after the existing four-item shop_catalog seed loop, add:
+    for (const x of [
+      ["runeblade","Рунный клинок","🗡️",2400,42],
+      ["armor_leather","Кожаная броня","🥋",420,0],
+      ["armor_iron","Железная броня","🛡️",900,0],
+      ["armor_north","Северная броня","🧥",1800,0],
+      ["armor_jarl","Доспех ярла","👑",3500,0],
+      ["belt_warrior","Пояс воина","🎗️",350,8],
+      ["boots_wind","Сапоги ветра","🥾",550,10],
+      ["ring_ice","Кольцо льда","💍",900,5],
+      ["amulet_north","Амулет Севера","🔮",1400,4]
+    ]) this.sql.exec(
+      `INSERT OR IGNORE INTO shop_catalog(item_id,name,icon,price_coins,damage,active,updated_at)
+       VALUES(?,?,?,?,?,1,?)`,...x,now()
+    );
+
+3) Add battle-stone purchase method inside TerritoryDB:
+    buyBattleStones(id,pack){
+      this.init();
+      const packs={
+        stones_10:{qty:10,gems:2},
+        stones_60:{qty:60,gems:12},
+        stones_600:{qty:600,gems:100}
+      };
+      const x=packs[String(pack||"")];
+      if(!x)throw Error("Unknown battle-stone pack");
+      const p=this.player(id);
+      if(!p)throw Error("Player not found");
+      if(Number(p.gems)<x.gems)throw Error("Not enough gems");
+      const state=this.gameState(id)||{};
+      const before=p.gems;
+      state.battleStones=Math.max(0,Number(state.battleStones)||0)+x.qty;
+      this.sql.exec(
+        `UPDATE players SET gems=?,updated_at=? WHERE telegram_id=?`,
+        before-x.gems,now(),id
+      );
+      this.saveGameState(id,state,true);
+      this.sql.exec(
+        `INSERT INTO economy_ledger(telegram_id,currency,amount,balance_before,balance_after,kind,reference,reason,created_at)
+         VALUES(?,?,?,?,?,?,?,?,?)`,
+        id,'gems',-x.gems,before,before-x.gems,'battle_stones_purchase',
+        String(pack),'Battle stones purchase',now()
+      );
+      this.event(id,'Shop','buy_battle_stones',JSON.stringify({pack,qty:x.qty,gems:x.gems}));
+      const np=this.player(id);
+      return {ok:true,pack,quantity:x.qty,state:this.gameState(id),player:this.playerPayload(id),economy:this.economySnapshot(id)};
+    }
+
+4) Add daily check-in method inside TerritoryDB:
+    dailyCheckin(id){
+      this.init();
+      const p=this.player(id);
+      if(!p)throw Error("Player not found");
+      const state=this.gameState(id)||{};
+      const today=new Date().toISOString().slice(0,10);
+      if(String(state.dailyCheckinDate||"")===today)throw Error("Ежедневная награда уже получена");
+      state.dailyCheckinDate=today;
+      state.battleStones=Math.max(0,Number(state.battleStones)||0)+5;
+      state.battleStonesBonus=Math.max(0,Number(state.battleStonesBonus)||0);
+      this.saveGameState(id,state,true);
+      this.event(id,'Daily','checkin',JSON.stringify({date:today,battleStones:5}));
+      return {ok:true,reward:{battleStones:5},state:this.gameState(id),player:this.playerPayload(id)};
+    }
+
+5) Add chat method to RoomHub:
+    async chat(s,id,text){
+      const r=Object.values(s.rooms).find(x=>!x.ended&&x.players.some(p=>p.id===id&&!p.left));
+      if(!r)throw Error("Бой не найден");
+      const me=r.players.find(p=>p.id===id&&!p.left);
+      if(!me)throw Error("Игрок не найден");
+      const message=String(text||"").trim().slice(0,180);
+      if(!message) return;
+      r.log.push(`💬 ${me.name}: ${message}`);
+      r.log=r.log.slice(-60);
+      await this.save(s);
+      for(const p of r.players.filter(p=>!p.bot&&!p.left))
+        this.send(p.id,{type:"chat",name:me.name,text:message,room:publicRoom(r)});
+    }
+
+6) In RoomHub.message(), add:
+    else if(m.type==="chat")await this.chat(s,id,m.text);
+
+7) Add Worker public routes next to /api/shop and /api/shop/buy:
+    if(u.pathname==="/api/battle-stones/buy" && request.method==="POST"){
+      const x=await bodyJSON(request);
+      return json(await dbJSON(stub,"/db/battle-stones/buy","POST",{id,pack:x.pack}));
+    }
+    if(u.pathname==="/api/daily/checkin" && request.method==="POST"){
+      return json(await dbJSON(stub,"/db/daily/checkin","POST",{id}));
+    }
+
+8) Add TerritoryDB routes next to /db/shop:
+    if(u.pathname==="/db/battle-stones/buy" && request.method==="POST"){
+      const x=await b();return json(this.buyBattleStones(x.id,x.pack));
+    }
+    if(u.pathname==="/db/daily/checkin" && request.method==="POST"){
+      const x=await b();return json(this.dailyCheckin(x.id));
+    }
+
+9) Add battle stones to authoritative daily rewards.
+In rewardClaim():
+- extend addReward() so that if r.battleStones is present it increases
+  state.battleStones by that amount.
+- Add battle_stones to at least these daily rewards:
+    daily_wins: {coins:300,xp:20,battleStones:2}
+    daily_loot: {coins:250,materials:5,battleStones:2}
+    daily_forge:{coins:350,gems:3,battleStones:2}
+    daily_boss:{coins:500,gems:5,battleStones:5}
+- Add battleStones to the boss completion reward in pveComplete(), for example:
+    normal: 0
+    boss: 5
+  so a boss win grants five extra battle stones.
+
+10) Keep real-money offers UI-only until Telegram Stars/payment provider is configured.
+Do not add fake payment success.
+
+*** END PATCH
