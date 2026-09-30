@@ -14,9 +14,12 @@ class_name = "RoomHub"
 tag = "v4"
 new_sqlite_classes = ["TerritoryDB"]
 
+# v5 is intentionally a no-op.
+# RoomHub already has a provisioned Durable Object namespace.
+# Re-declaring RoomHub in new_classes/new_sqlite_classes makes Wrangler
+# try to create it again and causes Cloudflare migration error 10074.
 [[migrations]]
 tag = "v5"
-new_sqlite_classes = ["RoomHub"]
 
 [triggers]
 crons = ["0 3 * * *"]
