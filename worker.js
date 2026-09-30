@@ -414,7 +414,7 @@ export class RoomHub extends DurableObject{
   const r=Object.values(s.rooms).find(x=>!x.ended&&x.players.some(p=>p.id===id&&!p.left));if(!r)throw Error("Бой не найден");
   const me=r.players.find(p=>p.id===id);if(!me||me.bot)throw Error("Недоступный игрок");
   if(r.activeId!==String(id))throw Error("Сейчас ход другого игрока");
-  const actionId=s(String(m.actionId||"")).slice(0,80);if(!actionId)throw Error("actionId обязателен");
+  const actionId=String(m.actionId||"").slice(0,80);if(!actionId)throw Error("actionId обязателен");
   if(r.actions.includes(actionId)){this.send(id,{type:"duplicate_ignored",actionId,turnSeq:r.turnSeq});return;}
   const seq=n(m.turnSeq,0);if(seq!==r.turnSeq)throw Error("Устаревший ход");
   if(Date.now()-r.lastActionAt>ARENA_TURN_TIMEOUT_MS){await this.advanceTurn(s,r,true);throw Error("Ход просрочен");}
