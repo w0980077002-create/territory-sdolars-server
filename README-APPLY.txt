@@ -1,26 +1,27 @@
-TERRITORY — FINAL NEW GAME START
+TERRITORY — NEW GAME START / CORRECTED PASS 01
 
-This is the ONE-TIME fresh-game initialization.
+IMPORTANT:
+Do not delete the repository.
+Do not replace worker.js.
 
-Upload/replace ONLY these two files in the server GitHub repository:
+Replace ONLY:
   bootstrap.js
   wrangler.toml
 
-Do NOT upload or execute the previous SQL reset packages.
-Delete the old SQL reset file from GitHub if it is still there:
-  TERRITORY-NEW-GAME-START-ONCE.zip
-  RESET-ALL-PLAYERS.sql
-  RESET-NEW-GAME-FOUNDATION-V2.sql
+This pass fixes the previous bootstrap issue by creating
+territory_runtime_meta before the first SELECT.
 
-How it works:
-- GitHub -> Cloudflare deploys automatically.
-- bootstrap.js calls the existing TerritoryDB through Durable Object RPC.
-- On the first request after this deployment, the DB is reset exactly once.
-- The marker is stored inside the same SQLite Durable Object.
-- Existing Telegram identity fields are preserved.
-- Existing players become Level 1 / XP 0 / VIP 0 / Coins 0 / Gems 0 / HP 100/100.
-- Player-specific test data is cleared.
-- New players automatically receive the same clean initial game state.
-- The reset cannot run again because the persistent marker is checked before every attempt.
+It also normalizes NEW players created after the one-time reset
+to the same clean starting values:
+Level 1, XP 0, VIP 0, coins 0, gems 0, HP 100/100,
+strength 5, agility 5, defense 0, weapon "Кулаки",
+and the fresh initial game state.
 
-No Cloudflare Data Studio action is required.
+The reset is protected by a persistent marker in the same
+Durable Object SQLite database and is intended to run once only.
+
+Do not perform any manual Cloudflare deployment.
+GitHub -> Cloudflare handles deployment according to the
+existing Git integration.
+
+This package was statically checked with Node syntax validation.
