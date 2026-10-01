@@ -1,5 +1,5 @@
 name = "territory-sdolars-server"
-main = "worker.js"
+main = "bootstrap.js"
 compatibility_date = "2026-09-19"
 
 [[durable_objects.bindings]]
@@ -14,10 +14,6 @@ class_name = "RoomHub"
 tag = "v4"
 new_sqlite_classes = ["TerritoryDB"]
 
-# v5 is intentionally a no-op.
-# RoomHub already has a provisioned Durable Object namespace.
-# Re-declaring RoomHub in new_classes/new_sqlite_classes makes Wrangler
-# try to create it again and causes Cloudflare migration error 10074.
 [[migrations]]
 tag = "v5"
 
