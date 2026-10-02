@@ -1,4 +1,4 @@
-import app, { TerritoryDB, RoomHub } from "./worker.js";
+import app, { TerritoryDB, RoomHub, GameHub, PresenceHub } from "./worker.js";
 
 const RESET_KEY = "fresh_game_start_2026_10_01";
 
@@ -86,8 +86,6 @@ TerritoryDB.prototype.upsert = function(user) {
 TerritoryDB.prototype.freshGameResetOnce = function() {
   this.init();
 
-  // The marker table belongs to the same Durable Object SQLite database.
-  // Creating it here makes the first-run path safe on existing deployments.
   this.sql.exec(`
     CREATE TABLE IF NOT EXISTS territory_runtime_meta(
       key TEXT PRIMARY KEY,
@@ -131,7 +129,6 @@ TerritoryDB.prototype.freshGameResetOnce = function() {
         banned=0, ban_reason='', state_json=?, updated_at=?
     `, stateJson, Math.floor(Date.now()/1000));
 
-    // Keep administrative history; it is not player progression.
     this.sql.exec(
       "INSERT INTO territory_runtime_meta(key,value) VALUES(?,?)",
       RESET_KEY,
@@ -146,7 +143,7 @@ TerritoryDB.prototype.freshGameResetOnce = function() {
   return { ok: true, performed: true, players: playerCount, reset: RESET_KEY };
 };
 
-export { TerritoryDB, RoomHub };
+export { TerritoryDB, RoomHub, GameHub, PresenceHub };
 
 export default {
   async fetch(request, env, ctx) {
